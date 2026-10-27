@@ -16,7 +16,9 @@ lowercase letters, digits, `.`, `_` and `-`. The server refuses `human:` actors.
 | Antigravity / Cursor / others | `lattice mcp-config json agent:<name>` |
 | Local models (Ollama) | use any MCP-capable runner (e.g. an Open WebUI MCP bridge, or Aider/Continue with MCP) and give it `agent:ollama-<model>` |
 
-On Windows, point `--db` at an absolute path such as `C:/Users/you/lattice/.lattice/lattice.db`.
+`lattice mcp-config` prints configs that use the venv's own Python by absolute path, so they work
+without PATH or venv activation, and on Windows. `.vscode/mcp.json` assumes a Windows venv at `.venv\Scripts`;
+in the Linux dev container, run `lattice mcp-config vscode agent:copilot` and paste the output instead.
 All agents can share one database. SQLite serializes writers.
 
 ## The loop

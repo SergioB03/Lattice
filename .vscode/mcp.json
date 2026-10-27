@@ -2,9 +2,9 @@
   "servers": {
     "lattice": {
       "type": "stdio",
-      "command": "lattice-mcp",
-      "args": ["--db", "${workspaceFolder}/.lattice/lattice.db"],
-      "env": { "LATTICE_ACTOR": "agent:vscode-copilot" }
+      "command": "${workspaceFolder}/.venv/Scripts/python.exe",
+      "args": ["-m", "lattice.mcp_server", "--db", "${workspaceFolder}/.lattice/lattice.db"],
+      "env": { "LATTICE_ACTOR": "agent:copilot" }
     }
   }
 }

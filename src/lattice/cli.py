@@ -261,16 +261,22 @@ def cmd_neo4j(ns) -> None:
 
 
 def cmd_mcp_config(ns) -> None:
+    """Print client config using this interpreter's absolute path, so it works without PATH or venv activation."""
     db = str(Path(ns.db).resolve())
     actor = ns.actor_id
+    py = sys.executable
+    args = ["-m", "lattice.mcp_server", "--db", db]
+    name = "lattice-" + actor.split(":")[1]
     if ns.client == "claude":
-        print(f"claude mcp add lattice-{actor.split(':')[1]} -e LATTICE_ACTOR={actor} -- lattice-mcp --db \"{db}\"")
+        quoted = " ".join(f'"{a}"' if " " in a else a for a in [py, *args])
+        print(f"claude mcp add {name} -e LATTICE_ACTOR={actor} -- {quoted}")
     elif ns.client == "codex":
-        print(f'[mcp_servers.lattice]\ncommand = "lattice-mcp"\nargs = ["--db", {json.dumps(db)}]\nenv = {{ LATTICE_ACTOR = "{actor}" }}')
+        print(f"[mcp_servers.{name.replace('-', '_')}]\ncommand = {json.dumps(py)}\nargs = {json.dumps(args)}\n"
+              f'env = {{ LATTICE_ACTOR = "{actor}" }}')
     elif ns.client == "vscode":
-        _out({"servers": {"lattice": {"type": "stdio", "command": "lattice-mcp", "args": ["--db", db], "env": {"LATTICE_ACTOR": actor}}}})
+        _out({"servers": {name: {"type": "stdio", "command": py, "args": args, "env": {"LATTICE_ACTOR": actor}}}})
     else:
-        _out({"mcpServers": {"lattice": {"command": "lattice-mcp", "args": ["--db", db], "env": {"LATTICE_ACTOR": actor}}}})
+        _out({"mcpServers": {name: {"command": py, "args": args, "env": {"LATTICE_ACTOR": actor}}}})
 
 
 def build_parser() -> argparse.ArgumentParser:

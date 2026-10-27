@@ -14,6 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "${{ matrix.python }}" }
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.22", cache: false }
       - run: python -m pip install -e ".[all,dev]"
       - run: python -m pytest -q
       - name: Governance eval
