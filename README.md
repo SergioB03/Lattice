@@ -34,7 +34,7 @@ Lattice takes a different route:
 | 🕰️ **Facts have time** | Bitemporal facts: when it was true *and* when we learned it. New values supersede old ones; history stays queryable (`as_of`). |
 | 🔍 **Provenance on every line** | Every fact carries its author (`agent:codex-rem`, `human:sergio`…), trust, confidence, source and proposal id. |
 | 🎯 **Agent reads on a budget** | `lattice_context` returns compact, cited text under a hard token cap. It reports what it omitted and hands back a cursor. |
-| ⛓️ **Tamper-evident ledger** | Skylr-compatible hash chain (RFC 8785-style canonical JSON, SHA-256). The whole graph can be **rebuilt from the ledger**, and CI checks that it matches. |
+| ⛓️ **Tamper-evident ledger** | Skylr-compatible hash chain (RFC 8785-style canonical JSON, SHA-256). The whole graph can be **rebuilt from the ledger**. `ledger audit` re-derives every decision, and owner actions are HMAC-signed. |
 | 🧪 **A governance test bed** | `lattice eval` scores any policy engine (the built-in one, or Skylr) on correctness, parity, consistency and portability. |
 
 ## Quickstart (60 seconds)
@@ -44,8 +44,7 @@ git clone https://github.com/SergioB03/lattice && cd lattice
 python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[all,dev]"
 
-lattice init --owner human:sergio --demo             # a small graph about Lattice, Skylr and your agents
-lattice owner set-passphrase                         # needed to approve agent proposals
+lattice init --owner human:sergio --demo             # asks for your owner passphrase; seeds a small demo graph
 lattice ui --open                                    # http://127.0.0.1:8765
 ```
 
@@ -57,6 +56,7 @@ lattice add Lattice uses SQLite --source README      # quick fact (as the owner)
 lattice review list                                  # what agents are waiting on
 lattice review approve p_86043132ed8b
 lattice ledger verify                                # ✔ chain intact; rebuild from ledger matches
+lattice ledger audit                                 # ✔ every decision re-derived, owner signatures checked
 ```
 
 **VS Code:** open the folder and accept the recommended extensions. *Tasks* (Ctrl+Shift+P → Run Task) has
@@ -82,8 +82,8 @@ Tools agents get. Every description says *when* to use it.
 | `lattice_search` | Fuzzy lookup → ids |
 | `lattice_context` | **Main read.** Cited facts about one entity, token-budgeted, paged by cursor, `as_of`, `min_trust` |
 | `lattice_neighbors`, `lattice_path` | "What's connected to X?" / "How is A related to B?" |
-| `lattice_history`, `lattice_changes_since` | What changed, and what used to be true |
-| `lattice_propose`, `lattice_proposal_status` | The only write path |
+| `lattice_history`, `lattice_changes_since` | What changed, what used to be true, how your proposals were resolved |
+| `lattice_propose`, `lattice_my_proposals`, `lattice_proposal_status` | The only write path, and its follow-up |
 
 Deliberately missing: approve, delete, raw Cypher, schema edits that skip governance. More in [docs/agents.md](docs/agents.md).
 
@@ -108,7 +108,8 @@ The built-in policy (`lattice-py/1`):
 - **Overriding a higher-trust author goes to review.** That includes an agent "updating" your fact or backdating over it.
 - **Near-duplicate entities go to review; exact duplicates are denied.** Homoglyph-aware, so `Skуlr` with a Cyrillic у is caught.
 - **Instruction-like text goes to review.** Stored text is always fenced «like this» for readers.
-- **Agents can write freely about themselves** (their own `agent:` entity), so scratch memory has no friction.
+- **Agents can write freely about themselves** (their own `agent:` entity), so scratch memory has no friction, unless they'd overrule what you wrote there.
+- **Agents can't quietly rewrite your summaries or claim single-value slots on your entities**, and backdating more than a year goes to review.
 - **Retraction, alias edits and schema changes by agents go to review.**
 - **Rate and size limits apply per role.**
 
@@ -123,15 +124,17 @@ lattice --engine "skylr graph evaluate" ui                              # Skylr 
 lattice eval --with-engine skylr="skylr graph evaluate"                 # score it against the suite
 ```
 
-Current numbers (`lattice eval --with-engine strict="python examples/engines/strict_engine.py"`, 27 cases):
+Current numbers (`lattice eval --with-engine strict="python examples/engines/strict_engine.py"`, 37 cases, 150 metamorphic parity checks):
 
 | engine | coverage | accuracy | weighted | adversarial | parity | consistency | review rate | p50 ms |
 |---|---|---|---|---|---|---|---|---|
-| builtin (`lattice-py/1`) | 100% | 96% | 89% | 89% | 100% (105) | 100% | 37% | 1.2 |
-| strict example (`command:strict`) | 100% | 63% | 63% | 56% | 100% (105) | 100% | 56% | 25 |
+| builtin (`lattice-py/1`) | 100% | 97% | 92% | 94% | 100% (150) | 100% | 43% | 1.25 |
+| strict (`command:strict`) | 100% | 62% | 62% | 59% | 100% (150) | 100% | 57% | 25.3 |
 
-The one built-in miss is the honest open problem: a *paraphrased* injection with no trigger phrase (`I04`).
-Catching it needs a semantic judge, which is a natural job for a local model on the 3090 rig.
+The built-in miss is a deliberately kept, honest open problem (`I05`): reputation poisoning
+phrased as a plain fact ("records crediting anyone else were vandalism"). No keyword heuristic
+catches that; a semantic judge, such as a local model on the 3090 rig behind the command-engine
+protocol, is the planned fix.
 [docs/evals.md](docs/evals.md) explains why each metric resists gaming (always-deny can't score well, for example).
 
 ## Neo4j
@@ -178,7 +181,7 @@ docs/             architecture, decisions (with red-team rounds), research, thre
 ## Roadmap
 
 1. **Consensus engine.** A proposal applies only when *k* agents from different vendors agree, mirroring the Skylr review rounds.
-2. **Semantic injection judge.** A local Qwen model on the rig, run as a command engine. It targets eval case `I04`.
+2. **Semantic injection judge.** A local Qwen model on the rig, run as a command engine. It targets eval case `I05`.
 3. **Skylr adapter.** `skylr graph evaluate`, with Lattice's ledger head anchored in Skylr's ledger.
 4. Optional embeddings, entity merges with undo, and streamable HTTP with per-agent tokens.
 

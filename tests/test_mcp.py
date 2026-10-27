@@ -21,8 +21,8 @@ def _text(res) -> str:
 def db(tmp_path):
     path = tmp_path / "g.db"
     lat = Lattice.open(path)
-    lat.init(owner="human:sergio")
-    seed(lat, "human:sergio")
+    lat.init(owner="human:sergio", passphrase="correct horse battery")
+    seed(lat, "human:sergio", "correct horse battery")
     lat.close()
     return str(path)
 
@@ -36,6 +36,7 @@ def test_stdio_roundtrip(db):
             tools = {t.name for t in (await client.list_tools()).tools}
             assert {"lattice_propose", "lattice_context", "lattice_search", "lattice_schema"} <= tools
             assert not any("approve" in t or "cypher" in t or "delete" in t for t in tools)
+            assert "lattice_my_proposals" in tools
 
             who = json.loads(_text(await client.call_tool("lattice_whoami", {})))
             assert who["actor"] == "agent:claude-code" and who["role"] == "agent"
@@ -57,6 +58,12 @@ def test_stdio_roundtrip(db):
                          "value": "MCP round trip works", "source": "tests/test_mcp.py", "confidence": 0.9}],
                 "justification": "e2e test", "idempotency_key": "t1"})))
             assert again["proposal_id"] == res["proposal_id"] and again["deduplicated"]
+            bad = await client.call_tool("lattice_context", {"entity": "Lattice", "as_of": "2026-13-45"})
+            assert bad.is_error if hasattr(bad, "is_error") else bad.isError
+            ch = _text(await client.call_tool("lattice_changes_since", {"seq": 0}))
+            assert "next_seq=" in ch and "claude-code: " not in ch  # own changes are excluded by default
+            mine = _text(await client.call_tool("lattice_my_proposals", {"status": "applied"}))
+            assert res["proposal_id"] in mine
 
     asyncio.run(run())
 

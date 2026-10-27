@@ -1,5 +1,7 @@
 name: ci
 on: [push, pull_request]
+env:
+  PYTHONUTF8: "1"
 jobs:
   test:
     runs-on: ${{ matrix.os }}
@@ -19,7 +21,8 @@ jobs:
       - name: Ledger round trip
         shell: bash
         run: |
-          lattice --db ci.db init --owner human:ci --demo
+          lattice --db ci.db init --owner human:ci --demo --insecure-dev
+          lattice --db ci.db ledger audit --no-passphrase
           lattice --db ci.db ledger verify
           lattice --db ci.db replay
 

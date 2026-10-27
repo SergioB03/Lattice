@@ -87,23 +87,23 @@ agent/human ──propose(ops)──▶ validate (shape, schema, references)
 | Surface | For | Notes |
 | --- | --- | --- |
 | Python library `lattice` | code | `Lattice.open(path)` |
-| CLI `lattice` | humans, scripts | init, propose, review, get, search, context, history, ledger verify, replay, eval, neo4j sync |
-| MCP server `lattice-mcp` | agents | stdio (Claude Code, Codex, VS Code, Antigravity) and streamable HTTP; actor bound per server entry |
+| CLI `lattice` | humans, scripts | init, add/new/propose, review, show, search, history, ledger verify/audit/anchor, replay, eval, neo4j sync |
+| MCP server `lattice-mcp` | agents | stdio (Claude Code, Codex, VS Code, Antigravity); actor bound per server entry |
 | Web UI `lattice ui` | humans | review queue, entity cards, timeline, ledger; stdlib server, no build step |
 
 ## Actors and trust
 
-`lattice.yaml` declares actors (`human:sergio`, `agent:claude-code`,
+The governed config (stored in the ledger) declares actors (`human:sergio`, `agent:claude-code`,
 `agent:codex-rem`, `agent:ollama-qwen`, …) with a role. Roles grant operations
 and a trust rank. Each MCP server entry is launched with `LATTICE_ACTOR`, so
-every write is attributed. Like Skylr's ledger, this is *attribution, not
-authentication*: whoever controls the machine can claim any actor. Auth is a
-later milestone.
+every write is attributed. Agent ids are *attribution, not authentication*. The owner is different:
+the passphrase is set in the genesis event, human-authored events carry an owner HMAC, and
+`lattice ledger audit` re-derives every decision. See [threat-model.md](threat-model.md).
 
 ## Skylr test bed
 
 `lattice eval` runs scenario suites (YAML) against one or more engines and
-reports four neutrality metrics. They come from Sergio's open question about
+reports neutrality metrics (refined in round 1; see [evals.md](evals.md)). They come from Sergio's open question about
 measuring neutrality:
 
 * **Coverage:** share of scenarios that get a well-formed decision (no crash or timeout).

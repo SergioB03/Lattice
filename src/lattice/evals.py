@@ -47,16 +47,15 @@ def load_suites(paths: list[str]) -> list[dict[str, Any]]:
 
 def _fresh(engine: Engine) -> Lattice:
     lat = Lattice.open(":memory:", engine=BuiltinEngine())
-    lat.init(owner=OWNER, now="2026-10-27T11:00:00.000Z")
+    lat.init(owner=OWNER, insecure_dev=True, now="2026-10-27T11:00:00.000Z")  # evals never touch real secrets
     seed(lat, OWNER)
     lat.engine = engine
     return lat
 
 
 def _outcome(res: dict[str, Any]) -> str:
-    if res["status"] == "invalid":
-        return "invalid"
-    return res["outcome"]
+    return {"applied": "allow", "allowed": "allow", "pending": "review", "denied": "deny", "invalid": "invalid",
+            "rejected": "deny"}[res["status"]]
 
 
 def run_case(engine: Engine, case: dict[str, Any], actor: str | None = None, mutate=None) -> dict[str, Any]:

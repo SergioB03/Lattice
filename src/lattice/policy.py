@@ -53,6 +53,11 @@ def make_decision(engine_id: str, policy_input: dict[str, Any], findings: list[d
     }
 
 
+def _days_before(ts: str, now: str) -> int:
+    from datetime import date
+    return (date.fromisoformat(now[:10]) - date.fromisoformat(ts[:10])).days
+
+
 class BuiltinEngine:
     """Reference policy. Change the version string whenever semantics change."""
 
@@ -63,13 +68,15 @@ class BuiltinEngine:
             raise ValueError("not a lattice policy input")
         actor, role = inp["actor"], inp["role"]
         approval = inp["approval"]
-        approved = bool(approval["by"]) and (approval["trust"] > actor["trust"] or approval["by"] == actor["id"])
+        # A human approval clears only the review findings that human actually saw.
+        acknowledged = {(a["rule_id"], a["op_index"]) for a in approval.get("acknowledged", [])} \
+            if approval["by"] and (approval["trust"] > actor["trust"] or approval["by"] == actor["id"]) else set()
         res = inp["resolution"]
         findings: list[dict[str, Any]] = []
 
         def find(rule: str, outcome: str, idx: int, detail: str) -> None:
-            if outcome == "review" and approved:
-                return  # a higher-trust human already reviewed it
+            if outcome == "review" and (rule, idx) in acknowledged:
+                return
             findings.append({"rule_id": rule, "outcome": outcome, "op_index": idx, "detail": detail})
 
         ops = inp["proposal"]["ops"]
@@ -80,7 +87,9 @@ class BuiltinEngine:
 
         for item in inp["plan"]:
             i, op = item["index"], item["op"]
-            own = item["target"] == actor["id"]
+            # "Own" means: about the actor's own entity AND not overruling anyone else's words.
+            others = [c for c in item["closes"] + item["overlaps"] if c["actor"] != actor["id"]]
+            own = item["target"] == actor["id"] and not others
             verdict = role["ops"][op]
             if verdict == "deny":
                 find("role.op", "deny", i, f"Role {actor['role']!r} may not {op}.")
@@ -91,20 +100,30 @@ class BuiltinEngine:
                 if role["require_source"] and not item["has_source"]:
                     find("evidence.source_required", "deny", i, "Add a 'source' (URL, file, conversation or 'observed') to this assertion.")
                 if item["confidence_bp"] < role["min_confidence_bp"] and not own:
-                    find("evidence.low_confidence", "review", i, f"Confidence {item['confidence_bp']}bp is below {role['min_confidence_bp']}bp.")
+                    find("evidence.low_confidence", "review", i,
+                         f"Confidence {item['confidence_bp'] // 100} is below this role's minimum of {role['min_confidence_bp'] // 100} (scale 0-100).")
+            if op == "assert" and item["effect"] == "insert" and item["cardinality"] == "one" and not own \
+                    and item["owner_trust"] > actor["trust"]:
+                find("trust.claim_slot", "review", i,
+                     f"Sets a single-value fact on an entity created by a higher-trust actor (trust {item['owner_trust']} > {actor['trust']}).")
+            if item["valid_from"] and item["effect"] != "noop" and actor["trust"] < 70 and _days_before(item["valid_from"], inp["now"]) > 365:
+                find("temporal.backdated", "review", i, "valid_from is more than a year in the past; a human should confirm the history.")
+            if item["overlaps"]:
+                find("temporal.overlap", "review", i,
+                     "Lands inside an earlier recorded interval (" + ", ".join(o["id"] for o in item["overlaps"]) + ") and would shorten it.")
             for closed in item["closes"]:
-                if closed["trust"] > actor["trust"] and not own:
+                if closed["trust"] > actor["trust"]:
                     find("trust.override", "review", i,
                          f"Would close {closed['id']} written by higher-trust {closed['actor']} (trust {closed['trust']} > {actor['trust']}).")
             if op == "create_entity" and item["best_match"]["id"]:
                 score, other = item["best_match"]["score_bp"], item["best_match"]["id"]
-                same_type = item["best_match"]["type"] == inp["proposal"]["ops"][i]["type"]
+                same_type = item["best_match"]["type"] == ops[i]["type"]
                 if score >= res["duplicate_threshold_bp"] and same_type:
-                    find("entity.duplicate", "deny", i, f"Looks like existing {other} ({score}bp). Use that id, or add an alias.")
+                    find("entity.duplicate", "deny", i, f"Looks like existing {other} ({score // 100}%). Use that id, or add an alias.")
                 elif score >= res["review_threshold_bp"]:
                     kind = "" if same_type else f" (a {item['best_match']['type']})"
                     find("entity.near_duplicate", "review", i,
-                         f"Close to existing {other}{kind} ({score}bp); a human should confirm it's different.")
+                         f"Close to existing {other}{kind} ({score // 100}%); a human should confirm it's different.")
             if item["instruction_like"]:
                 find("text.instruction_like", "review", i, "Text reads like instructions to a model; a human should confirm it's knowledge, not an injection.")
         return make_decision(self.id, inp, findings)
@@ -130,13 +149,18 @@ class CommandEngine:
             if proc.returncode != 0:
                 raise RuntimeError(f"exit {proc.returncode}: {proc.stderr.decode(errors='replace')[:200]}")
             out = json.loads(proc.stdout)
-            if out.get("outcome") not in RANK or not out.get("rule_id") or not out.get("reason"):
-                raise RuntimeError("decision must contain outcome (allow|review|deny), rule_id and reason")
-            findings = out.get("findings") or [
-                {"rule_id": out["rule_id"], "outcome": out["outcome"], "op_index": -1, "detail": out["reason"]}
-            ]
-            decision = make_decision(self.id, inp, findings)
-            decision.update(outcome=out["outcome"], rule_id=str(out["rule_id"]), reason=str(out["reason"]))
+            if out.get("outcome") not in RANK or not isinstance(out.get("rule_id"), str) or not isinstance(out.get("reason"), str) \
+                    or not out["rule_id"] or not out["reason"]:
+                raise RuntimeError("decision must contain outcome (allow|review|deny), rule_id and reason strings")
+            findings = []
+            for f in out.get("findings") or []:
+                if not (isinstance(f, dict) and f.get("outcome") in RANK and isinstance(f.get("rule_id"), str)
+                        and isinstance(f.get("detail"), str) and isinstance(f.get("op_index"), int) and not isinstance(f.get("op_index"), bool)):
+                    raise RuntimeError("each finding needs rule_id, outcome, op_index (int) and detail")
+                findings.append({k: f[k] for k in ("rule_id", "outcome", "op_index", "detail")})
+            findings.append({"rule_id": out["rule_id"], "outcome": out["outcome"], "op_index": -1, "detail": out["reason"]})
+            decision = make_decision(self.id, inp, findings)  # outcome = the worst of the stated outcome and findings
+            canonical_bytes(decision)
             return decision
         except Exception as exc:  # noqa: BLE001 - every failure must fail closed
             return make_decision(self.id, inp, [{"rule_id": "engine.error", "outcome": "deny", "op_index": -1,

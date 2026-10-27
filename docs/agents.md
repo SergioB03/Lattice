@@ -38,7 +38,9 @@ All agents can share one database. SQLite serializes writers.
    - `pending`: a human will review it. **Don't re-propose** (identical pending proposals are folded anyway).
    - `denied`: the `reason` says what rule fired. Fix it or drop it.
    - `invalid`: the error names the op and usually suggests the right name.
-5. When you resume later: `lattice_changes_since(seq)` with the `@seq` from your last context call.
+5. When you resume later: `lattice_changes_since(seq)` with the `@seq` from your last context call
+   (it shows other actors' changes and how your own proposals were resolved), and
+   `lattice_my_proposals` for anything still pending.
 
 ## Rules of thumb for agents
 

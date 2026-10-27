@@ -59,7 +59,7 @@ class FakeDriver:
 @pytest.fixture()
 def lat():
     lat = Lattice.open(":memory:")
-    lat.init(owner="human:sergio")
+    lat.init(owner="human:sergio", insecure_dev=True)
     seed(lat, "human:sergio")
     return lat
 

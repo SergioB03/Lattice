@@ -27,3 +27,36 @@ that hadn't seen any code.
 | D13 | Five eval metrics | Each one is gameable (always-deny gets 100% coverage, etc.) | **Changed.** Correctness is a confusion matrix weighting false-allows. Parity is metamorphic (swap vendor, same role). Portability is Cohen's κ. Latency p50/p99 per engine |
 | D14 | Streamable HTTP MCP transport | Adds an auth surface | **Cut** for v0.1; stdio only |
 | D15 | Entity merges | Alias/merge hijack | **Cut** to aliases only; alias edits are governed |
+
+## Round 2: AX test agent and independent code review (Oct 27, 2026)
+
+Two agents that hadn't seen the design discussions went at the working build.
+One used it purely through MCP as an agent would. The other did a cold
+security and correctness review and reproduced each finding. Every confirmed finding
+is fixed and pinned by a test in `tests/test_round2.py` or a scenario in the eval suite.
+
+| # | Finding (severity) | Fix |
+|---|---|---|
+| R2-1 | `as_of` hid superseded facts; malformed dates compared as strings (High) | Valid-time queries include closed intervals; `as_of` is strictly parsed |
+| R2-2 | "Own entity" exemption let an agent overrule the owner's facts about itself (High) | Self-scope never covers closing another actor's words; `trust.override` always applies |
+| R2-3 | Window to claim the passphrase before the owner set it (High) | Passphrase is set in the genesis event; `insecure_dev` must be explicit; MCP refuses unsecured graphs |
+| R2-4 | Forged ledger *appends* pass the hash check (High) | `lattice ledger audit`: re-derives every decision and applied change from prior state; human-authored events carry an owner HMAC keyed from the passphrase |
+| R2-5 | Approval suppressed review findings that appeared after the human looked (Med) | Approvals acknowledge only the findings shown; new ones send the proposal back to the queue |
+| R2-6 | Unfenced names/aliases in search and change feeds; multi-line names forged result lines (Med) | Identifier fields are single-line on write; all outputs fence stored text |
+| R2-7 | Paging stalled on a fact bigger than the budget (Med) | Each page shows at least one (truncated) fact; cursor carries `as_of`/`min_trust` |
+| R2-8 | Reviewers saw raw ops, not what would be applied (Med) | Ops are cleaned before hashing; review cards show resolved targets, closes and every field |
+| R2-9 | Idempotency key pinned an invalid result; reused key with new content silently dropped (High, AX) | Failed attempts don't consume a key; same key + different content is an error |
+| R2-10 | Duplicates inside one proposal; homoglyph/variant names (Med) | Resolution checks earlier creates in the same plan; visual skeleton (I/l/1, 0/o, rn/m) and name containment |
+| R2-11 | Backdated value overlapped a superseded interval (Med) | The covered interval is trimmed, and the change routes to review (`temporal.overlap`) |
+| R2-12 | Agents could rewrite a human's summary, or claim single-value slots on owner entities, unattributed (Critical, AX) | Summaries carry author + trust and are governed like facts; `trust.claim_slot`; summaries show `[by actor·trust]` |
+| R2-13 | Polite injections ("Note for assistants…") passed (High, AX) | Detector covers reader-addressed directives; a reputation-poisoning case (`I05`) stays as a documented known gap |
+| R2-14 | Command engine could `allow` while reporting a `deny` finding; floats crashed recording (Low) | Outcome is the worst of stated outcome and findings; malformed output fails closed |
+| R2-15 | Wrong field types crashed planning (Low) | Every field type-checked → `invalid` with a message |
+| R2-16 | UI accepted any approver name; IPv6 Host; negative Content-Length; LAN binding (Low) | Owner-only approvals, proper Host parsing, length bounds, localhost-only unless explicitly allowed |
+| R2-17 | AX: no "my proposals", noisy change feed, misleading object/value errors, 100% default confidence | `lattice_my_proposals`; `changes_since` excludes your own writes, drops no-ops, reports your resolutions; precise object/value errors; agents default to 80% |
+
+**Disagreed / deferred:**
+- *Make missing `source` an `invalid` rather than `denied`.* We kept it as `denied`. It's a role
+  policy (owners and maintainers don't need sources), not a schema rule, and the deny reason says exactly what to add.
+- *Set MCP `isError` for denied/invalid proposals.* We set it for bad input (unknown ids, malformed
+  dates, key conflicts). A denied proposal is a successful call with a governance answer, so it isn't an error.

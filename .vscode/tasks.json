@@ -3,10 +3,11 @@
   "tasks": [
     { "label": "Lattice: install (editable)", "type": "shell", "command": "python -m pip install -e \".[all,dev]\"", "problemMatcher": [] },
     { "label": "Lattice: test", "type": "shell", "command": "python -m pytest -q", "group": { "kind": "test", "isDefault": true }, "problemMatcher": [] },
-    { "label": "Lattice: init demo graph", "type": "shell", "command": "lattice --db .lattice/lattice.db init --demo", "problemMatcher": [] },
+    { "label": "Lattice: init demo graph", "type": "shell", "command": "lattice --db .lattice/lattice.db init --owner human:sergio --demo", "problemMatcher": [] },
     { "label": "Lattice: open UI", "type": "shell", "command": "lattice --db .lattice/lattice.db ui --open", "isBackground": true, "problemMatcher": [] },
     { "label": "Lattice: eval (neutrality report)", "type": "shell", "command": "lattice --db .lattice/eval.db eval", "problemMatcher": [] },
     { "label": "Lattice: verify ledger", "type": "shell", "command": "lattice --db .lattice/lattice.db ledger verify", "problemMatcher": [] },
+    { "label": "Lattice: deep audit", "type": "shell", "command": "lattice --db .lattice/lattice.db ledger audit", "problemMatcher": [] },
     { "label": "Neo4j: up", "type": "shell", "command": "docker compose up -d neo4j", "problemMatcher": [] },
     { "label": "Neo4j: sync projection", "type": "shell", "command": "lattice --db .lattice/lattice.db neo4j sync", "problemMatcher": [] }
   ]

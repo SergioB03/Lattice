@@ -58,30 +58,38 @@ def _open(ns, create: bool = False) -> Lattice:
     return lat
 
 
-def _passphrase(ns) -> str:
+def _passphrase(ns, prompt: str = "owner passphrase: ") -> str:
     # Interactive only, on purpose: agents with a shell have no TTY to answer this prompt.
     if os.environ.get("LATTICE_ALLOW_ENV_PASSPHRASE") == "1" and os.environ.get("LATTICE_OWNER_PASSPHRASE"):
         return os.environ["LATTICE_OWNER_PASSPHRASE"]
     if not sys.stdin.isatty():
-        raise AuthError("reviewing needs an interactive terminal (owner passphrase prompt)")
-    return getpass.getpass("owner passphrase: ")
+        raise AuthError("this needs the owner passphrase at an interactive terminal")
+    return getpass.getpass(prompt)
 
 
 def cmd_init(ns) -> None:
     lat = _open(ns, create=True)
-    lat.init(owner=ns.owner)
+    pw = None
+    if not ns.insecure_dev:
+        print("Choose the owner passphrase. You'll need it to approve agent proposals and to write as yourself.")
+        pw = _passphrase(ns, "new owner passphrase: ")
+        if sys.stdin.isatty() and getpass.getpass("again: ") != pw:
+            raise AuthError("passphrases differ")
+    lat.init(owner=ns.owner, passphrase=pw, insecure_dev=ns.insecure_dev)
     print(BANNER)
-    print(f"\n{GREEN}initialized{RESET} {ns.db}  owner={ns.owner}")
+    print(f"\n{GREEN}initialized{RESET} {ns.db}  owner={ns.owner}" + (f"  {YELLOW}(insecure dev mode){RESET}" if ns.insecure_dev else ""))
     if ns.demo:
         from .demo import seed
-        seed(lat, ns.owner)
+        seed(lat, ns.owner, pw)
         print(f"{GREEN}seeded{RESET} demo graph: {lat.stats()['entities']} entities, {lat.stats()['facts_current']} facts")
-    print(f"next: {CYAN}lattice owner set-passphrase{RESET}  (needed to approve agent proposals)")
+    print(f"next: {CYAN}lattice ui --open{RESET}  or  {CYAN}lattice mcp-config claude agent:claude-code{RESET}")
 
 
 def cmd_passphrase(ns) -> None:
     lat = _open(ns)
-    old = getpass.getpass("current passphrase (blank if none): ") if sys.stdin.isatty() else ""
+    if not sys.stdin.isatty():
+        raise AuthError("changing the passphrase needs an interactive terminal")
+    old = getpass.getpass("current passphrase: ") if lat.owner_secured else ""
     new = getpass.getpass("new passphrase: ")
     if new != getpass.getpass("again: "):
         raise AuthError("passphrases differ")
@@ -90,7 +98,7 @@ def cmd_passphrase(ns) -> None:
 
 
 def _pp(ns, lat: Lattice) -> str | None:
-    return _passphrase(ns) if ns.actor.startswith("human:") and lat.human_writes_locked else None
+    return _passphrase(ns) if ns.actor.startswith("human:") and lat.owner_secured else None
 
 
 def cmd_propose(ns) -> None:
@@ -191,6 +199,17 @@ def cmd_ledger(ns) -> None:
               f"rebuild from ledger {'matches' if ok else 'DIFFERS'}\n  head {r['head']}")
         if not ok:
             sys.exit(1)
+    elif ns.action == "audit":
+        pw = _passphrase(ns) if lat.owner_secured and not ns.no_passphrase else ""
+        r = lat.audit(pw)
+        ok = r["ok"]
+        print(f"{GREEN if ok else RED}{'✔' if ok else '✘'}{RESET} deep audit: {r['events']} events, {r['decisions_checked']} decisions "
+              f"re-derived, {r['applies_checked']} applies re-planned, {r['macs_verified']} owner signatures verified"
+              + (f", {r['macs_unverifiable']} unverifiable (no/old passphrase)" if r["macs_unverifiable"] else ""))
+        for p in r["problems"]:
+            print(f"  {RED}•{RESET} {p}")
+        if not ok:
+            sys.exit(1)
     elif ns.action == "anchor":
         _out(lat.anchor())
     elif ns.action == "tail":
@@ -259,6 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("init", help="create a new graph")
     s.add_argument("--owner", default="human:owner")
     s.add_argument("--demo", action="store_true", help="seed a small demo graph")
+    s.add_argument("--insecure-dev", action="store_true", help="no owner passphrase (throwaway graphs, tests)")
     s.set_defaults(fn=cmd_init)
 
     o = sub.add_parser("owner", help="owner secret")
@@ -320,8 +340,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--limit", type=int, default=50)
     s.set_defaults(fn=cmd_history)
 
-    s = sub.add_parser("ledger", help="verify | anchor | tail | export")
-    s.add_argument("action", choices=["verify", "anchor", "tail", "export"])
+    s = sub.add_parser("ledger", help="verify | audit | anchor | tail | export")
+    s.add_argument("action", choices=["verify", "audit", "anchor", "tail", "export"])
+    s.add_argument("--no-passphrase", action="store_true", help="audit without checking owner signatures")
     s.add_argument("--limit", type=int, default=25)
     s.set_defaults(fn=cmd_ledger)
 
@@ -359,6 +380,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> None:
+    for stream in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252; Lattice prints «» and ✔
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ns = build_parser().parse_args(argv)
     if getattr(ns, "actor", "x") is None:
         try:

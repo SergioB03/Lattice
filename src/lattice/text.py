@@ -24,6 +24,13 @@ _INSTRUCTION_PATTERNS = [
     r"\bcurl\s+https?://",
     r"\b(approve|auto-?approve) (this|all) (proposals?|requests?)\b",
     r"<\s*/?\s*(system|assistant|tool|instructions?)\s*>",
+    # Directives addressed to whoever reads this later: the stored-injection shape.
+    r"\b(agents?|assistants?|ais?|llms?|models?|bots?)\b[^.\n]{0,30}\b(reading|that reads?|should|must|always|never)\b",
+    r"\b(note|message|reminder) (to|for) (all )?(agents?|assistants?|ais?|llms?|models?)\b",
+    r"\b(pre-?approved|delegated|granted)\b[^.\n]{0,40}\b(rights?|access|permissions?|approval|owner)\b",
+    r"\bwithout (asking|review|approval|confirmation)\b",
+    r"\bneeds? no (review|approval)\b",
+    r"\bwhen (summari[sz]ing|answering|asked)\b[^.\n]{0,60}\b(always|never|say|describe|claim)\b",
 ]
 _INSTRUCTION_RE = re.compile("|".join(_INSTRUCTION_PATTERNS), re.IGNORECASE)
 
@@ -61,6 +68,17 @@ def slugify(text: str) -> str:
     return (s or "x")[:48].strip("-")
 
 
+_SKELETON = [("rn", "m"), ("vv", "w"), ("1", "l"), ("i", "l"), ("|", "l"), ("0", "o")]
+
+
+def skeleton(text: str) -> str:
+    """Visual skeleton for look-alike comparison: SkyIr, Sky1r and Skylr share one."""
+    s = norm_key(text)
+    for a, b in _SKELETON:
+        s = s.replace(a, b)
+    return s
+
+
 def similarity_bp(a: str, b: str) -> int:
     """Name similarity in basis points (0..10000). Deterministic and dependency-free."""
     ka, kb = norm_key(a), norm_key(b)
@@ -68,11 +86,16 @@ def similarity_bp(a: str, b: str) -> int:
         return 0
     if ka == kb:
         return 10000
+    if skeleton(a) == skeleton(b):
+        return 9900  # look-alike spelling: duplicate band, but distinguishable from an exact match
     ratio = difflib.SequenceMatcher(None, ka, kb, autojunk=False).ratio()
     # Token-set view catches reordered names ("Banuelos Sergio").
     ta, tb = set(ka.split()), set(kb.split())
     token = len(ta & tb) / max(len(ta | tb), 1)
-    return round(max(ratio, token) * 10000)
+    # Containment: "Lattice KG" vs "Lattice" is a likely variant of the same thing.
+    small, big = sorted((ta, tb), key=len)
+    contained = 0.88 if small < big and len(small) * 2 >= len(big) else 0.0
+    return round(max(ratio, token, contained) * 10000)
 
 
 def looks_like_instruction(text: str) -> bool:

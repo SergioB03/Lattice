@@ -37,6 +37,8 @@ were each gameable.
 
 ## Reading the current results
 
-The built-in engine misses one case: `I04`, a paraphrased instruction with no trigger
-phrase. That's a real limit of heuristics. A semantic judge (e.g. a local model behind
-the command-engine protocol) is the planned fix, and this case is how we'll know it worked.
+The built-in engine misses one case, `I05`: reputation poisoning phrased as a plain fact,
+with no instruction-like wording at all. That's the real limit of heuristics. A semantic judge
+(e.g. a local model behind the command-engine protocol) is the planned fix, and this case is how
+we'll know it worked. Round 2 closed the earlier gap (`I04`, a reader-addressed directive) and added
+cases for every finding from the AX and code-review agents.

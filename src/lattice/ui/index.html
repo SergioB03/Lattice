@@ -335,14 +335,25 @@ async function loadQueue(){
   const items = await api("/api/proposals?status=pending");
   $("#qcount").textContent = items.length || "";
   if (!items.length){ $("#queue").replaceChildren(h("div",{class:"empty"},"Nothing waiting on you.",h("p",{text:"When an agent's write needs a human, it shows up here with the rule that flagged it."}))); return; }
+  const planLine = (op, item) => {
+    const bits = [];
+    if (item && item.target) bits.push("target "+item.target);
+    if (item && item.effect) bits.push("effect: "+item.effect);
+    for (const c of (item && item.closes)||[]) bits.push(`closes ${c.id} by ${c.actor}`);
+    for (const c of (item && item.overlaps)||[]) bits.push(`shortens ${c.id} by ${c.actor}`);
+    const shown = new Set(["op","type","name","summary","subject","predicate","object","value","valid_from","source","confidence","fact","reason","entity","alias"]);
+    for (const [k,v] of Object.entries(op)) if (!shown.has(k)) bits.push(`${k}: ${typeof v==="string"? v : JSON.stringify(v)}`);
+    return bits.join(" · ");
+  };
+  const opItem = (p, o, i) => h("li",null, h("div",{text:opSentence(o)}), h("div",{class:"muted",style:"font-size:12.5px",text:planLine(o, p.plan[i])}));
   $("#queue").replaceChildren(...items.map(p=>h("article",{class:"prop"},
     h("div",null, h("div",{class:"kind"}, who(p.actor), h("span",{class:"mono",text:p.proposal_id}), h("span",{text:p.received_at.replace("T"," ").slice(0,16)})),
       h("h2",{text: p.proposal.ops.length===1 ? opSentence(p.proposal.ops[0]) : `${p.proposal.ops.length} changes`}),
       p.proposal.justification ? h("p",{class:"why",text:"“"+p.proposal.justification+"”"}) : null),
     h("div",{class:"acts"}, h("button",{class:"btn no",onclick:()=>decide(p.proposal_id,"reject"),text:"Reject"}),
       h("button",{class:"btn yes",onclick:()=>decide(p.proposal_id,"approve"),text:"Approve"})),
-    h("div",{class:"rule"}, h("code",{text:p.rule_id||""}), h("span",{text:p.reason||""})),
-    p.proposal.ops.length>1 ? h("ol",null,...p.proposal.ops.map(o=>h("li",{text:opSentence(o)}))) : null
+    ...(p.findings.length? p.findings : [{rule_id:p.rule_id||"", detail:p.reason||""}]).map(f=>h("div",{class:"rule"}, h("code",{text:f.rule_id}), h("span",{text:f.detail}))),
+    h("ol",null,...p.proposal.ops.map((o,i)=>opItem(p,o,i)))
   )));
 }
 function askPass(title, label){

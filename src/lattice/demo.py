@@ -5,7 +5,7 @@ from __future__ import annotations
 from .core import Lattice
 
 
-def seed(lat: Lattice, owner: str = "human:owner") -> None:
+def seed(lat: Lattice, owner: str = "human:owner", passphrase: str | None = None) -> None:
     ops = [
         {"op": "create_entity", "type": "person", "name": "Sergio Banuelos", "aliases": ["Sergio"], "ref": "$me",
          "summary": "Builder. Owner of this graph."},
@@ -44,7 +44,7 @@ def seed(lat: Lattice, owner: str = "human:owner") -> None:
         {"op": "assert", "subject": "$rem", "predicate": "works_on", "object": "$skylr"},
         {"op": "assert", "subject": "$qwen", "predicate": "works_on", "object": "$skylr"},
     ]
-    lat.propose(owner, ops, "Demo seed", now="2026-10-27T12:00:00.000Z")
+    lat.propose(owner, ops, "Demo seed", now="2026-10-27T12:00:00.000Z", passphrase=passphrase)
     # Agents write too, each attributed and governed.
     lat.propose("agent:claude-code", [
         {"op": "assert", "subject": "decision:sqlite-is-the-source-of-truth-neo4j-is-a-projection", "predicate": "decided_by",

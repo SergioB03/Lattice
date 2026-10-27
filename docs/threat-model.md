@@ -19,8 +19,10 @@ what), and its history (nothing silently rewritten).
 | Threat | Control |
 |---|---|
 | Agent writes bypass review | MCP exposes only `propose`; the policy decides. There are no delete, approve or Cypher tools |
-| Agent runs `lattice review approve` or `lattice add --as human:…` from its shell | Approving, and writing as a human once a passphrase exists, both need the owner passphrase at an interactive TTY prompt. Agent shells have no TTY. `LATTICE_ALLOW_ENV_PASSPHRASE=1` is an explicit opt-out for your own scripts |
-| Self-approval | Approvers must be `human:` actors with the passphrase. MCP refuses human actors |
+| Agent runs `lattice review approve` or `lattice add --as human:…` from its shell | Approving and writing as a human both need the owner passphrase at an interactive TTY prompt. Agent shells have no TTY. `LATTICE_ALLOW_ENV_PASSPHRASE=1` is an explicit opt-out for your own scripts |
+| Claiming the passphrase before the owner does | It's set in the genesis event (`lattice init` prompts). Graphs without one must be created with `--insecure-dev`, and MCP refuses to serve them unless they were |
+| Forged events appended with a valid hash chain | `lattice ledger audit` replays the ledger and re-derives every policy input, decision and applied change from prior state. Human-authored events (human writes, approvals, rejections, passphrase changes) carry an HMAC keyed from the owner passphrase, which agents don't know |
+| Self-approval | Only the owner can approve, with the passphrase. MCP refuses human actors. An approval acknowledges only the findings the owner saw |
 | TOCTOU between decision and apply | Decide and apply run in one `BEGIN IMMEDIATE` transaction. Approval re-plans and re-decides on current state |
 | Salami-slicing / flooding | Per-role op limits and hourly rate limits. Identical pending proposals are folded |
 | Stored prompt injection | Invisible and bidi characters are stripped on write. Instruction-like text goes to review. All stored text is fenced «» with author and trust when read. `min_trust` filtering |
@@ -33,14 +35,14 @@ what), and its history (nothing silently rewritten).
 
 ## What's NOT enforced (be honest)
 
-- **A process running as your OS user can edit the SQLite file.** It could replace the
-  passphrase hash or rewrite rows and recompute the hash chain. The ledger makes
-  inconsistent edits *evident* (`lattice ledger verify` also rebuilds and compares), but it can't
-  stop someone who rewrites everything consistently. Mitigations:
+- **A process running as your OS user can edit the SQLite file.** It can't forge owner-signed
+  events or ungoverned changes without `lattice ledger audit` noticing. But it can *truncate* history,
+  or replace the whole file with a consistent one that has a different passphrase. You'd find that out
+  when your passphrase stops working, or when the head no longer matches an anchor. Mitigations:
   - `lattice ledger anchor` and commit the head somewhere agents can't write (another account,
     a phone note, or Skylr's ledger once integrated);
   - run agents under a separate OS user without write access to the DB file, talking to Lattice only through MCP.
 - **Actor ids aren't authenticated.** Whoever configures an MCP entry chooses its actor id.
   That's attribution, not identity. Per-agent tokens come with the HTTP transport.
-- **The instruction-like detector is a heuristic.** Paraphrased injections pass (eval case `I04`).
+- **The instruction-like detector is a heuristic.** Fact-shaped manipulation passes (eval case `I05`).
   Agents must still treat «» text as data.

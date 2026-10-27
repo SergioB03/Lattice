@@ -42,7 +42,7 @@ def _entity_payload(lat: Lattice, ref: str) -> dict[str, Any]:
                     "other_type": name(other)["type"] if other else ""}
 
     hist = lat.history(eid, limit=200)
-    pending = [p for p in lat.list_proposals("pending", limit=100) if eid in json.dumps(p["proposal"]["ops"])]
+    pending = [p for p in lat.list_proposals("pending", limit=100) if any(i["target"] == eid for i in p["plan"])]
     return {
         "id": eid, "type": row[0], "name": row[1], "summary": row[2], "created_by": row[3], "created_seq": row[4],
         "aliases": aliases,
@@ -72,8 +72,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def _host_ok(self) -> bool:
-        host = (self.headers.get("Host") or "").split(":")[0]
-        return host in ("127.0.0.1", "localhost", "[::1]")
+        host = urlparse("//" + (self.headers.get("Host") or "")).hostname or ""
+        return host in ("127.0.0.1", "localhost", "::1")
 
     def do_GET(self) -> None:
         if not self._host_ok():
@@ -105,7 +105,7 @@ class Handler(BaseHTTPRequestHandler):
                 if u.path == "/api/recent":
                     rows = self.lat.conn.execute("SELECT id, type, name FROM entities ORDER BY created_seq DESC, id LIMIT 12").fetchall()
                     return self._send(200, [{"id": r[0], "type": r[1], "name": r[2]} for r in rows])
-        except LatticeError as exc:
+        except (LatticeError, ValueError) as exc:
             return self._send(400, {"error": str(exc)})
         self._send(404, {"error": "not found"})
 
@@ -116,11 +116,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403, {"error": "cross-site request refused"})
         u = urlparse(self.path)
         try:
-            body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 1_000_000)) or b"{}")
+            n = int(self.headers.get("Content-Length") or 0)
+            if not 0 <= n <= 1_000_000:
+                return self._send(413, {"error": "bad length"})
+            body = json.loads(self.rfile.read(n) or b"{}")
             with _LOCK:
                 parts = u.path.strip("/").split("/")
                 if len(parts) == 4 and parts[:2] == ["api", "proposals"] and parts[3] in ("approve", "reject"):
-                    who = body.get("actor") or self.lat.owner
+                    who = self.lat.owner  # only the owner holds the passphrase
                     if parts[3] == "approve":
                         return self._send(200, self.lat.approve(parts[2], who, body.get("passphrase", "")))
                     return self._send(200, self.lat.reject(parts[2], who, body.get("passphrase", ""), body.get("reason", "")))
@@ -140,6 +143,9 @@ def make_server(lat: Lattice, host: str = "127.0.0.1", port: int = 8765) -> Thre
 
 
 def serve(lat: Lattice, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = False) -> None:
+    import os
+    if host not in ("127.0.0.1", "localhost", "::1") and os.environ.get("LATTICE_UI_ALLOW_REMOTE") != "1":
+        raise LatticeError("the UI only binds to localhost (set LATTICE_UI_ALLOW_REMOTE=1 if you really mean it)")
     srv = make_server(lat, host, port)
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{port}/"
     print(f"Lattice UI on {url}  (Ctrl+C to stop)")

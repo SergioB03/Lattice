@@ -21,7 +21,8 @@ PRAGMA foreign_keys=ON;
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS entities(
   id TEXT PRIMARY KEY, type TEXT NOT NULL, name TEXT NOT NULL, name_key TEXT NOT NULL,
-  summary TEXT NOT NULL, created_seq INTEGER NOT NULL, created_by TEXT NOT NULL);
+  summary TEXT NOT NULL, created_seq INTEGER NOT NULL, created_by TEXT NOT NULL, created_trust INTEGER NOT NULL,
+  summary_by TEXT NOT NULL, summary_trust INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS entities_name_key ON entities(name_key);
 CREATE TABLE IF NOT EXISTS aliases(
   entity_id TEXT NOT NULL REFERENCES entities(id), alias TEXT NOT NULL, alias_key TEXT NOT NULL,
@@ -87,8 +88,9 @@ def apply_effects(conn: sqlite3.Connection, effects: Iterable[dict[str, Any]], *
         kind = e["effect"]
         if kind == "entity_created":
             conn.execute(
-                "INSERT INTO entities VALUES(?,?,?,?,?,?,?)",
-                (e["id"], e["type"], e["name"], norm_key(e["name"]), e["summary"], seq, actor),
+                "INSERT INTO entities VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (e["id"], e["type"], e["name"], norm_key(e["name"]), e["summary"], seq, actor, e["trust"],
+                 actor if e["summary"] else "", e["trust"] if e["summary"] else 0),
             )
             for alias in e["aliases"]:
                 conn.execute(
@@ -101,7 +103,8 @@ def apply_effects(conn: sqlite3.Connection, effects: Iterable[dict[str, Any]], *
             )
             _reindex(conn, e["entity"])
         elif kind == "summary_updated":
-            conn.execute("UPDATE entities SET summary=? WHERE id=?", (e["summary"], e["entity"]))
+            conn.execute("UPDATE entities SET summary=?, summary_by=?, summary_trust=? WHERE id=?",
+                         (e["summary"], e["by"], e["trust"], e["entity"]))
             _reindex(conn, e["entity"])
         elif kind == "fact_inserted":
             f = e["fact"]
@@ -120,6 +123,9 @@ def apply_effects(conn: sqlite3.Connection, effects: Iterable[dict[str, Any]], *
             )
             if cur.rowcount != 1:
                 raise RuntimeError(f"fact {e['id']} is not current; refusing to close it twice")
+        elif kind == "fact_trimmed":
+            conn.execute("UPDATE facts SET valid_to=? WHERE id=? AND status IN ('superseded','historical')",
+                         (e["valid_to"], e["id"]))
         elif kind == "type_defined":
             schema = json.loads(get_meta(conn, "schema"))
             schema["entity_types"][e["name"]] = e["description"]
@@ -139,6 +145,9 @@ def apply_event(conn: sqlite3.Connection, ev: ledger.Event) -> None:
         set_meta(conn, "schema", json.dumps(p["schema"], sort_keys=True))
         set_meta(conn, "config", json.dumps(p["config"], sort_keys=True))
         set_meta(conn, "initialized_at", ev.ts)
+        if p.get("owner_hash"):
+            set_meta(conn, "owner_hash", p["owner_hash"])
+        set_meta(conn, "insecure_dev", "1" if p.get("insecure_dev") else "0")
     elif ev.type == "config.changed":
         set_meta(conn, "config", json.dumps(p["config"], sort_keys=True))
     elif ev.type == "owner.passphrase_set":
@@ -191,6 +200,7 @@ def append_and_apply(conn: sqlite3.Connection, *, run_id: str, type: str, actor:
 
 def dump_tables(conn: sqlite3.Connection) -> dict[str, list[tuple]]:
     out = {t: sorted(conn.execute(f"SELECT * FROM {t}").fetchall()) for t in GRAPH_TABLES}
+    out["entity_fts"] = sorted(conn.execute("SELECT entity_id, text FROM entity_fts").fetchall())
     out["meta"] = sorted(r for r in conn.execute("SELECT * FROM meta") if r[0] != "neo4j_watermark")
     return out
 

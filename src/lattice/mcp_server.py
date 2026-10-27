@@ -16,6 +16,7 @@ from typing import Any
 
 from .config import validate_actor_id
 from .core import Lattice, LatticeError, default_db_path
+from .text import quote
 
 INSTRUCTIONS = """Lattice is a shared, governed knowledge graph. Other agents and humans read what you write.
 Typical loop: lattice_search (find ids) → lattice_context (read, cheap, cited) → lattice_propose (write).
@@ -46,73 +47,91 @@ def build_server(lat: Lattice, actor: str):
         return lat.schema_text()
 
     @server.tool(annotations=ro)
-    def lattice_search(query: str, types: list[str] | None = None, limit: int = 8) -> str:
-        """Use to find entity ids by name, alias or summary words (fuzzy). Returns ids to pass to other tools. Cheap."""
+    def lattice_search(query: str = "", types: list[str] | None = None, limit: int = 8) -> str:
+        """Find entity ids by name, alias or summary words (fuzzy). Empty query + types lists entities of those types."""
         hits = lat.search(query, types=types, limit=limit)
         if not hits:
             return "No matches. Try a shorter or different word, or create the entity with lattice_propose."
-        return "\n".join(f"- {h['id']} «{h['name']}» ({h['type']}, {h['score_bp'] // 100}%)"
-                         + (f" aka {', '.join(h['aliases'][:3])}" if h["aliases"] else "") for h in hits)
+        return "\n".join(f"- {h['id']} {quote(h['name'])} ({h['type']}, {h['score_bp'] // 100}%)"
+                         + (" aka " + ", ".join(quote(a) for a in h["aliases"][:3]) if h["aliases"] else "") for h in hits)
 
     @server.tool(annotations=ro)
     def lattice_context(entity: str, budget_tokens: int = 700, cursor: str = "", as_of: str = "", min_trust: int = 0) -> str:
         """Main read tool. Compact facts about one entity (id or exact name), each with fact id, author, trust and date.
         Hard-capped at budget_tokens; pass the returned cursor to page. as_of=YYYY-MM-DD shows what was true then.
         min_trust filters out lower-trust authors. Also lists your own pending proposals so you don't re-propose."""
-        return lat.context(entity, viewer=actor, budget_tokens=budget_tokens, cursor=cursor, as_of=as_of, min_trust=min_trust)
+        try:
+            return lat.context(entity, viewer=actor, budget_tokens=budget_tokens, cursor=cursor, as_of=as_of, min_trust=min_trust)
+        except LatticeError as exc:
+            raise ValueError(str(exc)) from None
 
     @server.tool(annotations=ro)
-    def lattice_neighbors(entity: str, predicates: list[str] | None = None, depth: int = 1, limit: int = 40) -> str:
-        """Use for 'what is connected to X' questions. Entity-to-entity links, depth 1-2, optionally filtered by predicate."""
+    def lattice_neighbors(entity: str, predicates: list[str] | None = None, depth: int = 1, limit: int = 40,
+                          direction: str = "both") -> str:
+        """For 'what is connected to X'. Entity-to-entity links, depth 1-2. direction: out (X's own links), in, or both.
+        Example: what tools do Sergio's projects use → entity=Sergio, predicates=[works_on, uses], depth=2, direction=out."""
         try:
-            edges = lat.neighbors(entity, predicates=predicates, depth=depth, limit=limit)
+            edges = lat.neighbors(entity, predicates=predicates, depth=depth, limit=limit, direction=direction)
         except LatticeError as exc:
-            return str(exc)
+            raise ValueError(str(exc)) from None
         return "\n".join(f"- {e['subject']} {e['predicate']} → {e['object']} [{e['fact']} · {e['actor']}·t{e['trust']}]"
                          for e in edges) or "No links."
 
     @server.tool(annotations=ro)
     def lattice_path(source: str, target: str, max_depth: int = 4) -> str:
-        """Use for 'how is A related to B': shortest chain of facts between two entities (either direction)."""
+        """For 'how is A related to B': shortest chain of facts between two entities (either direction)."""
         try:
             hops = lat.path(source, target, max_depth=max_depth)
         except LatticeError as exc:
-            return str(exc)
+            raise ValueError(str(exc)) from None
         return "\n".join(f"{i + 1}. {h['subject']} {h['predicate']} → {h['object']} [{h['fact']}]"
                          for i, h in enumerate(hops)) or f"No path within {max_depth} hops."
 
     @server.tool(annotations=ro)
     def lattice_history(entity: str, limit: int = 30) -> str:
-        """Use when you need to know what changed or what used to be true: every fact incl. superseded/retracted ones."""
+        """When you need what changed or what used to be true: every fact incl. superseded/retracted/historical ones."""
         try:
             fs = lat.history(entity, limit=limit)
+            eid = lat.entity(entity)["id"]
         except LatticeError as exc:
-            return str(exc)
-        eid = lat.entity(entity)["id"]
+            raise ValueError(str(exc)) from None
         return "\n".join(lat.fact_line(f, perspective="out" if f["subject"] == eid else "in") for f in fs) or "No history."
 
     @server.tool(annotations=ro)
-    def lattice_changes_since(seq: int, limit: int = 40) -> str:
-        """Use when resuming work: what other actors changed since ledger seq N (from a previous result's @seq)."""
-        return _fmt(lat.changes_since(seq, limit=limit))
+    def lattice_changes_since(seq: int, limit: int = 40, include_mine: bool = False) -> str:
+        """When resuming work: what *other* actors changed since ledger seq N (use the @seq from an earlier context call),
+        plus how your own proposals were resolved. Ends with the seq to use next time."""
+        r = lat.changes_since(seq, viewer=actor, include_mine=include_mine, limit=limit)
+        body = "\n".join(r["changes"]) or "Nothing new."
+        return f"{body}\nnext_seq={r['next_seq']} (head {r['head_seq']})"
+
+    @server.tool(annotations=ro)
+    def lattice_my_proposals(status: str = "pending", limit: int = 20) -> str:
+        """Your own proposals by status (pending, applied, denied, invalid, rejected). Check pending ones here once per task."""
+        items = lat.my_proposals(actor, status=status, limit=limit)
+        return "\n".join(f"- {p['proposal_id']} {p['status']} ({p['rule_id']}): {p['reason']} → {', '.join(p['targets'])}"
+                         for p in items) or f"No {status} proposals."
 
     @server.tool(annotations=ro)
     def lattice_proposal_status(proposal_id: str) -> str:
-        """Check a proposal you made earlier (pending → applied/rejected). Don't poll in a loop; check once per task."""
+        """Check one proposal you made earlier (pending → applied/rejected). Don't poll in a loop."""
         try:
             return _fmt(lat.proposal_status(proposal_id))
         except LatticeError as exc:
-            return str(exc)
+            raise ValueError(str(exc)) from None
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True, openWorldHint=False))
     def lattice_propose(ops: list[dict[str, Any]], justification: str, idempotency_key: str = "", model: str = "") -> str:
         """The only write tool. Submit typed ops; the policy engine decides allow / review / deny.
-        Ops (fields): create_entity(type,name,summary?,aliases?,ref?) · assert(subject,predicate,object|value,source,confidence 0-100?,
-        valid_from?,evidence?) · retract(fact,reason) · add_alias(entity,alias) · update_summary(entity,summary) ·
-        define_type(name,description) · define_predicate(name,domain,range,cardinality,description).
-        Use ref '$x' on create_entity and refer to '$x' in later ops of the same proposal.
-        Always give a 'source' for assert (URL, file path, 'conversation', 'observed'). Pending means a human will review it:
-        do not re-propose. Pass idempotency_key to make retries safe."""
+        Each op is an object with "op" plus fields:
+          create_entity(type, name, summary?, aliases?, ref?) · assert(subject, predicate, object|value, source, confidence 0-100?,
+          valid_from?, evidence?) · retract(fact, reason) · add_alias(entity, alias) · update_summary(entity, summary) ·
+          define_type(name, description) · define_predicate(name, domain, range, cardinality, description)
+        Example: [{"op":"create_entity","type":"tool","name":"Python","ref":"$py"},
+                  {"op":"assert","subject":"project:lattice","predicate":"uses","object":"$py","source":"pyproject.toml","confidence":95}]
+        Use 'object' for predicates that point at entities and 'value' for literal predicates (lattice_schema says which).
+        Always give a 'source'. Results: applied, pending (a human reviews it; do NOT re-propose), denied (read the reason),
+        invalid (fix and retry; reusing the idempotency_key is fine after a failure)."""
         for op in ops:
             if isinstance(op, dict) and isinstance(op.get("confidence"), float):
                 c = op["confidence"]
@@ -121,8 +140,13 @@ def build_server(lat: Lattice, actor: str):
             res = lat.propose(actor, ops, justification, idempotency_key=idempotency_key,
                               client={"model": model, "tool": "mcp"} if model else {"tool": "mcp"})
         except LatticeError as exc:
-            return f"error: {exc}"
-        return _fmt(res)
+            raise ValueError(str(exc)) from None
+        res.pop("decision_digest", None)
+        if not res.get("findings"):
+            res.pop("findings", None)
+        if not res.get("created"):
+            res.pop("created", None)
+        return json.dumps(res, ensure_ascii=False)
 
     return server
 
@@ -143,6 +167,12 @@ def main(argv: list[str] | None = None) -> None:
     if not lat.initialized:
         print("lattice-mcp: database is not initialized; run `lattice init`", file=sys.stderr)
         sys.exit(2)
+    if not lat.owner_secured:
+        from . import store
+        if store.get_meta(lat.conn, "insecure_dev") != "1":
+            print("lattice-mcp: no owner passphrase is set; refusing to serve agents", file=sys.stderr)
+            sys.exit(2)
+        print("lattice-mcp: WARNING insecure dev graph (no owner passphrase)", file=sys.stderr)
     build_server(lat, ns.actor).run("stdio")
 
 
