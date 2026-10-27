@@ -168,14 +168,14 @@ class Schema:
         }
 
     @classmethod
-    def from_json(cls, data: dict[str, Any]) -> "Schema":
+    def from_json(cls, data: dict[str, Any]) -> Schema:
         return cls(data["entity_types"], data["predicates"])
 
     def digest(self) -> str:
         return digest(self.to_json())
 
     @classmethod
-    def default(cls) -> "Schema":
+    def default(cls) -> Schema:
         text = resources.files("lattice").joinpath("data/default_schema.yaml").read_text(encoding="utf-8")
         data = yaml.safe_load(text)
         return cls(data["entity_types"], data["predicates"])

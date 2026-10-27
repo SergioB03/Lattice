@@ -81,7 +81,7 @@ class Lattice:
     # ------------------------------------------------------------------ lifecycle
 
     @classmethod
-    def open(cls, path: str | Path, engine: Engine | None = None, *, create: bool = True) -> "Lattice":
+    def open(cls, path: str | Path, engine: Engine | None = None, *, create: bool = True) -> Lattice:
         if not create and str(path) != ":memory:" and not Path(path).exists():
             raise LatticeError(f"no Lattice database at {path}; run `lattice init` first")
         lat = cls(store.connect(path), engine, str(path))

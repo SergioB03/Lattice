@@ -40,13 +40,13 @@ def label(entity_type: str) -> str:
 def statements_for(effect: dict[str, Any], seq: int, predicate_of) -> list[tuple[str, dict[str, Any]]]:
     k = effect["effect"]
     if k == "entity_created":
-        return [(f"MERGE (e:Entity {{id:$id}}) SET e:{label(effect['type'])}, e.name=$name, e.type=$type, "
-                 "e.summary=$summary, e.aliases=$aliases, e.created_seq=$seq",
+        return [((f"MERGE (e:Entity {{id:$id}}) SET e:{label(effect['type'])}, e.name=$name, e.type=$type, "
+                  "e.summary=$summary, e.aliases=$aliases, e.created_seq=$seq"),
                  {"id": effect["id"], "name": effect["name"], "type": effect["type"], "summary": effect["summary"],
                   "aliases": effect["aliases"], "seq": seq})]
     if k == "alias_added":
-        return [("MATCH (e:Entity {id:$id}) SET e.aliases = CASE WHEN $alias IN coalesce(e.aliases, []) "
-                 "THEN e.aliases ELSE coalesce(e.aliases, []) + $alias END", {"id": effect["entity"], "alias": effect["alias"]})]
+        return [(("MATCH (e:Entity {id:$id}) SET e.aliases = CASE WHEN $alias IN coalesce(e.aliases, []) "
+                  "THEN e.aliases ELSE coalesce(e.aliases, []) + $alias END"), {"id": effect["entity"], "alias": effect["alias"]})]
     if k == "summary_updated":
         return [("MATCH (e:Entity {id:$id}) SET e.summary=$summary", {"id": effect["entity"], "summary": effect["summary"]})]
     if k == "fact_inserted":
@@ -57,13 +57,13 @@ def statements_for(effect: dict[str, Any], seq: int, predicate_of) -> list[tuple
         if f["object"]:
             return [(f"MATCH (s:Entity {{id:$s}}), (o:Entity {{id:$o}}) MERGE (s)-[r:{rt} {{fact_id:$fid}}]->(o) SET r += $props",
                      {"s": f["subject"], "o": f["object"], "fid": f["id"], "props": props})]
-        return [(f"MATCH (s:Entity {{id:$s}}) MERGE (v:Value {{fact_id:$fid}}) SET v.value=$value, v.predicate=$pred "
-                 f"MERGE (s)-[r:{rt} {{fact_id:$fid}}]->(v) SET r += $props",
+        return [((f"MATCH (s:Entity {{id:$s}}) MERGE (v:Value {{fact_id:$fid}}) SET v.value=$value, v.predicate=$pred "
+                  f"MERGE (s)-[r:{rt} {{fact_id:$fid}}]->(v) SET r += $props"),
                  {"s": f["subject"], "fid": f["id"], "value": f["value"], "pred": f["predicate"], "props": props})]
     if k == "fact_closed":
         rt = rel_type(predicate_of(effect["id"]))
-        return [(f"MATCH ()-[r:{rt} {{fact_id:$fid}}]->() SET r.status=$status, r.valid_to=$valid_to, r.closed_seq=$seq, "
-                 "r.close_reason=$reason", {"fid": effect["id"], "status": effect["status"], "valid_to": effect["valid_to"],
+        return [((f"MATCH ()-[r:{rt} {{fact_id:$fid}}]->() SET r.status=$status, r.valid_to=$valid_to, r.closed_seq=$seq, "
+                  "r.close_reason=$reason"), {"fid": effect["id"], "status": effect["status"], "valid_to": effect["valid_to"],
                                             "seq": seq, "reason": effect["reason"]})]
     return []  # schema effects live in Lattice, not in the projection
 

@@ -8,7 +8,7 @@ import unicodedata
 
 # Control characters, zero-width characters and bidi overrides that can hide text from humans.
 _INVISIBLE = re.compile(
-    "[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f​-‏‪-‮⁠-⁤⁦-⁩﻿]"
+    "[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]"
 )
 
 # Phrases that read like instructions to a model rather than knowledge about the world.
@@ -72,7 +72,7 @@ def similarity_bp(a: str, b: str) -> int:
     # Token-set view catches reordered names ("Banuelos Sergio").
     ta, tb = set(ka.split()), set(kb.split())
     token = len(ta & tb) / max(len(ta | tb), 1)
-    return int(round(max(ratio, token) * 10000))
+    return round(max(ratio, token) * 10000)
 
 
 def looks_like_instruction(text: str) -> bool:

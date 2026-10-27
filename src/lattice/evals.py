@@ -25,11 +25,11 @@ from typing import Any
 
 import yaml
 
+from . import store
 from .canonical import digest
 from .core import Lattice
 from .demo import seed
 from .policy import BuiltinEngine, CommandEngine, Engine
-from . import store
 
 OUTCOMES = ("allow", "review", "deny", "invalid")
 VENDORS = ["agent:claude-code", "agent:codex-rem", "agent:ollama-qwen", "agent:antigravity", "agent:replit"]
@@ -114,7 +114,7 @@ def pct(values: list[float], q: float) -> float:
     if not values:
         return 0.0
     v = sorted(values)
-    return round(v[min(len(v) - 1, int(round(q * (len(v) - 1))))], 2)
+    return round(v[min(len(v) - 1, round(q * (len(v) - 1)))], 2)
 
 
 def evaluate(engines: dict[str, Engine], suites: list[dict[str, Any]]) -> dict[str, Any]:
@@ -191,7 +191,7 @@ def evaluate(engines: dict[str, Engine], suites: list[dict[str, Any]]) -> dict[s
 
 
 def to_markdown(rep: dict[str, Any]) -> str:
-    lines = [f"# Lattice governance eval", "", f"{rep['cases']} cases · suites: {', '.join(rep['suites'])}", "",
+    lines = ["# Lattice governance eval", "", f"{rep['cases']} cases · suites: {', '.join(rep['suites'])}", "",
              "| engine | coverage | accuracy | weighted | adversarial | parity | consistency | review rate | p50 ms | p99 ms |",
              "|---|---|---|---|---|---|---|---|---|---|"]
     for name, e in rep["engines"].items():

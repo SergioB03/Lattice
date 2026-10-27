@@ -1,0 +1,44 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "${{ matrix.python }}" }
+      - run: python -m pip install -e ".[all,dev]"
+      - run: python -m pytest -q
+      - name: Governance eval
+        run: lattice eval --markdown eval.md --out eval.json
+      - name: Ledger round trip
+        shell: bash
+        run: |
+          lattice --db ci.db init --owner human:ci --demo
+          lattice --db ci.db ledger verify
+          lattice --db ci.db replay
+
+  neo4j:
+    runs-on: ubuntu-latest
+    services:
+      neo4j:
+        image: neo4j:5-community
+        env: { NEO4J_AUTH: neo4j/lattice-dev-only }
+        ports: ["7687:7687"]
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p lattice-dev-only 'RETURN 1'"
+          --health-interval 5s --health-retries 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: python -m pip install -e ".[all,dev]"
+      - run: python -m pytest -q -m neo4j tests/test_neo4j.py
+        env:
+          LATTICE_TEST_NEO4J_URI: bolt://localhost:7687
+          LATTICE_TEST_NEO4J_PASSWORD: lattice-dev-only

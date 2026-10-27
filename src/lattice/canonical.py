@@ -13,7 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 MAX_SAFE_INT = 2**53 - 1
@@ -29,7 +29,7 @@ class CanonicalError(ValueError):
 def _check(value: Any, path: str) -> None:
     if value is None:
         raise CanonicalError(f"{path}: null is not allowed")
-    if isinstance(value, bool) or isinstance(value, str):
+    if isinstance(value, (bool, str)):
         return
     if isinstance(value, int):
         if not -MAX_SAFE_INT <= value <= MAX_SAFE_INT:
@@ -71,15 +71,15 @@ def format_ts(moment: datetime) -> str:
     """UTC timestamp with exactly millisecond precision."""
     if moment.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware")
-    moment = moment.astimezone(timezone.utc)
+    moment = moment.astimezone(UTC)
     return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
 
 
 def parse_ts(text: str) -> datetime:
     if not isinstance(text, str) or not TS_RE.match(text):
         raise ValueError(f"timestamp must look like 2026-10-27T15:04:05.000Z, got {text!r}")
-    return datetime.strptime(text, TS_FORMAT).replace(tzinfo=timezone.utc)
+    return datetime.strptime(text, TS_FORMAT).replace(tzinfo=UTC)
 
 
 def now_ts() -> str:
-    return format_ts(datetime.now(timezone.utc))
+    return format_ts(datetime.now(UTC))

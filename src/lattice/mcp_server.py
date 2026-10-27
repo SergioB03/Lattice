@@ -116,7 +116,7 @@ def build_server(lat: Lattice, actor: str):
         for op in ops:
             if isinstance(op, dict) and isinstance(op.get("confidence"), float):
                 c = op["confidence"]
-                op["confidence"] = int(round(c * 100)) if c <= 1 else int(round(c))
+                op["confidence"] = round(c * 100) if c <= 1 else round(c)
         try:
             res = lat.propose(actor, ops, justification, idempotency_key=idempotency_key,
                               client={"model": model, "tool": "mcp"} if model else {"tool": "mcp"})

@@ -139,5 +139,5 @@ class Config:
         return digest(self.data)
 
     @classmethod
-    def default(cls) -> "Config":
+    def default(cls) -> Config:
         return cls(DEFAULT_CONFIG)

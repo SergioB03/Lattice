@@ -7,10 +7,10 @@ import sys
 import pytest
 
 pytest.importorskip("mcp")
-from mcp import Client, StdioServerParameters  # noqa: E402
+from mcp import Client, StdioServerParameters
 
-from lattice.core import Lattice  # noqa: E402
-from lattice.demo import seed  # noqa: E402
+from lattice.core import Lattice
+from lattice.demo import seed
 
 
 def _text(res) -> str:
@@ -64,5 +64,5 @@ def test_stdio_roundtrip(db):
 def test_refuses_human_actor(db):
     import subprocess
     r = subprocess.run([sys.executable, "-m", "lattice.mcp_server", "--db", db, "--actor", "human:sergio"],
-                       capture_output=True, text=True, timeout=30)
+                       capture_output=True, text=True, timeout=30, check=False)
     assert r.returncode == 2 and "refusing" in r.stderr

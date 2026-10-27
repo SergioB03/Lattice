@@ -10,7 +10,7 @@ import pytest
 
 from lattice.core import Lattice, LatticeError
 from lattice.demo import seed
-from lattice.neo4j_sync import rel_type, statements_for, sync
+from lattice.neo4j_sync import rel_type, sync
 
 
 class _Res:
