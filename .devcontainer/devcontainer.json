@@ -1,0 +1,11 @@
+{
+  "name": "Lattice",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "workspace",
+  "runServices": ["workspace", "neo4j"],
+  "workspaceFolder": "/workspaces/lattice",
+  "postCreateCommand": "pip install -e '.[all,dev]' && lattice --db .lattice/lattice.db init --demo",
+  "forwardPorts": [7474, 7687, 8765],
+  "portsAttributes": { "7474": { "label": "Neo4j Browser" }, "8765": { "label": "Lattice UI" } },
+  "customizations": { "vscode": { "extensions": ["ms-python.python", "charliermarsh.ruff", "redhat.vscode-yaml"] } }
+}

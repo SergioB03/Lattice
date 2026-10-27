@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lattice-kg"
+version = "0.1.0"
+description = "A governed knowledge graph that humans and AI agents share. Agents propose; the policy engine disposes."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Sergio Banuelos" }]
+dependencies = ["pyyaml>=6"]
+
+[project.optional-dependencies]
+mcp = ["mcp>=2,<3"]
+neo4j = ["neo4j>=5.20"]
+dev = ["pytest>=8", "ruff>=0.6"]
+all = ["mcp>=2,<3", "neo4j>=5.20"]
+
+[project.scripts]
+lattice = "lattice.cli:main"
+lattice-mcp = "lattice.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+lattice = ["ui/*.html", "data/*.yaml", "data/scenarios/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["neo4j: needs a live Neo4j (set LATTICE_TEST_NEO4J_URI)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py312"

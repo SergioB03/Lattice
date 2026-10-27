@@ -1,0 +1,12 @@
+__pycache__/
+*.egg-info/
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.db
+*.db-wal
+*.db-shm
+.lattice/
+neo4j-data/

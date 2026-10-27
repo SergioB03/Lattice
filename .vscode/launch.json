@@ -1,0 +1,8 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    { "name": "Lattice UI", "type": "debugpy", "request": "launch", "module": "lattice.cli", "args": ["--db", ".lattice/lattice.db", "ui"], "justMyCode": true },
+    { "name": "Lattice MCP (stdio)", "type": "debugpy", "request": "launch", "module": "lattice.mcp_server", "args": ["--db", ".lattice/lattice.db"], "env": { "LATTICE_ACTOR": "agent:debug" } },
+    { "name": "Pytest: current file", "type": "debugpy", "request": "launch", "module": "pytest", "args": ["-q", "${file}"] }
+  ]
+}

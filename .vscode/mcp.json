@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "lattice": {
+      "type": "stdio",
+      "command": "lattice-mcp",
+      "args": ["--db", "${workspaceFolder}/.lattice/lattice.db"],
+      "env": { "LATTICE_ACTOR": "agent:vscode-copilot" }
+    }
+  }
+}

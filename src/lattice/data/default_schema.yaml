@@ -1,0 +1,30 @@
+# Lattice starter schema. Industry-neutral on purpose.
+# Extend it through governed `define_type` / `define_predicate` proposals.
+entity_types:
+  person:       "A human being."
+  organization: "A company, team, club, school or other group."
+  project:      "A body of work with a goal: a product, a hackathon entry, a course."
+  repo:         "A source-code repository."
+  agent:        "An AI agent or automation (Claude Code, Codex, a local model...)."
+  tool:         "Software, a service, a library or hardware used to get work done."
+  concept:      "An idea, technique or topic."
+  decision:     "A choice that was made, with its reasoning."
+  document:     "A file, page, paper or note."
+  event:        "Something that happened or will happen at a time."
+
+predicates:
+  works_on:    { domain: [person, agent], range: [project, repo], cardinality: many, description: "Actively contributes to." }
+  member_of:   { domain: [person, agent], range: [organization], cardinality: many, description: "Belongs to a group." }
+  owns:        { domain: [person, organization], range: [project, repo, tool, document], cardinality: many, description: "Is the owner of." }
+  depends_on:  { domain: [project, repo, tool], range: [project, repo, tool, concept], cardinality: many, description: "Needs this to work." }
+  uses:        { domain: [project, repo, agent, person, organization], range: [tool, concept], cardinality: many, description: "Makes use of." }
+  about:       { domain: [decision, document, event], range: "*", cardinality: many, description: "Concerns this subject." }
+  decided_by:  { domain: [decision], range: [person, agent, organization], cardinality: many, description: "Who made the decision." }
+  supersedes:  { domain: [decision, document], range: [decision, document], cardinality: one, description: "Replaces an earlier one." }
+  related_to:  { domain: "*", range: "*", cardinality: many, description: "Generic link. Prefer a specific predicate." }
+  status:      { domain: [project, repo, decision, event], range: "literal:enum:idea,planned,active,paused,done,abandoned", cardinality: one, description: "Lifecycle status." }
+  role:        { domain: [person, agent], range: "literal:string", cardinality: one, description: "Primary role or title." }
+  located_in:  { domain: [person, organization, event], range: "literal:string", cardinality: one, description: "City/region." }
+  url:         { domain: "*", range: "literal:url", cardinality: one, description: "Canonical link." }
+  happened_on: { domain: [event, decision], range: "literal:date", cardinality: one, description: "Calendar date (YYYY-MM-DD)." }
+  note:        { domain: "*", range: "literal:string", cardinality: many, description: "Free-text observation. Use sparingly." }
