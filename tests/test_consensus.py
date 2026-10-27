@@ -70,10 +70,10 @@ def test_votes_bind_to_the_plan_the_voter_saw(lat):
 def test_redecide_ignores_the_proposers_rate_limit(lat):
     """R3-3: a vote must not get someone else's proposal denied by *their* hourly rate limit."""
     cfg = lat.config.data
-    cfg["roles"]["agent"]["max_proposals_per_hour"] = 3
+    cfg["roles"]["agent"]["max_proposals_per_hour"] = 8
     lat.set_config(cfg, PW)
     pid = pending_url(lat)
-    for i in range(3):
+    for i in range(8):
         lat.propose("agent:ollama-qwen", [{"op": "assert", "subject": "agent:ollama-qwen", "predicate": "note",
                                            "value": f"busy {i}", "source": "s"}])
     endorse(lat, "agent:claude-code", pid)

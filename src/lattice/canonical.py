@@ -72,7 +72,9 @@ def format_ts(moment: datetime) -> str:
     if moment.tzinfo is None:
         raise ValueError("timestamps must be timezone-aware")
     moment = moment.astimezone(UTC)
-    return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+    if moment.year < 1900:
+        raise ValueError("dates before 1900 aren't supported")
+    return f"{moment.year:04d}-" + moment.strftime("%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
 
 
 def parse_ts(text: str) -> datetime:

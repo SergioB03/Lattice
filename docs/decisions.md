@@ -114,3 +114,23 @@ that let the small model write correctly on its first call.
 
 **Windows check:** `lattice mcp-config` now emits the venv's own Python by absolute path (no PATH or activation needed).
 `.vscode/mcp.json` targets `.venv\Scripts\python.exe`, CI covers Windows on Python 3.12 and 3.13, and the CLI forces UTF-8 output.
+
+## Round 5: final pre-release review (Oct 27, 2026)
+
+A reviewer with no prior context tried to break the near-final build. It found five release blockers. All were confirmed, and all are now fixed
+with tests (`tests/test_round5.py`) and scenarios.
+
+| # | Finding | Fix |
+|---|---|---|
+| F1 (blocker) | The owner signature covered only `{id, content_digest}`, so the body could be swapped and the audit still passed | Signatures cover the whole body. The audit recomputes every content digest and proposal id |
+| F2 (blocker) | The genesis was unsigned: roles could be rewritten under the same passphrase | The genesis is signed at `init` and verified by the audit. Insecure-dev ledgers are reported as unsigned |
+| F3 (blocker) | `--engine` let any shell user pick a yes-to-everything engine | The flag is gone. The engine lives in the owner-signed config (`lattice engine command …`), and command engine ids include a hash of the command |
+| F4 (blocker) | The audit trusted the recorded decision clock | The ledger clock is monotonic. The audit requires `now == event time` and timestamps that never decrease |
+| F5 (blocker) | Huge proposals were written to the append-only ledger before size checks; 1,500 ops held the write lock for 50 s | Byte, op-count and depth caps are enforced before anything is written |
+| F6 | Years before 1000 were formatted with three digits and broke ordering; Python/Go diverged | Years must be 1900 or later with four digits. Go's date parsing fails closed |
+| F7 | Agents could claim single-value slots through backdated facts or empty summaries | `trust.claim_slot` covers both (engine `lattice-py/4`, and the Go port too) |
+| F8 | An approval could cover a decision recorded after the owner looked | Approvals carry the decision digest the owner saw (CLI and UI) |
+| F9/F10 | Stale docs: fixed ids, engine versions, `mcp-config` output, VS Code path; the demo quietly enabled consensus | Docs corrected. The README says the demo registers four voters |
+| minor | The UI dropped malformed bodies; deep JSON raised RecursionError; punctuation-only names collided; `mcp-config` didn't validate ids | All return clean errors |
+
+The Go engine still matches the Python engine at κ = 1.0 across all 51 cases.

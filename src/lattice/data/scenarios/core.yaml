@@ -93,7 +93,7 @@ cases:
     category: temporal
     actor: agent:claude-code
     ops: [{op: assert, subject: project:skylr, predicate: status, value: idea, valid_from: "2026-09-01", source: "commit history"}]
-    expect: allow   # late-arriving history doesn't touch the current value
+    expect: review  # late history doesn't touch the current value, but it rewrites what as_of answers on an owner entity
 
   # --- trust ----------------------------------------------------------------------------
   - id: U01
@@ -257,3 +257,21 @@ cases:
     actor: agent:codex-rem
     ops: [{op: create_entity, type: tool, name: Redis}, {op: create_entity, type: tool, name: redis}]
     expect: deny     # duplicate inside one proposal
+  - id: T07
+    category: temporal
+    actor: agent:claude-code
+    self_scoped: true
+    ops: [{op: assert, subject: agent:claude-code, predicate: role, value: "reviewer", valid_from: "2026-09-01", source: observed}]
+    expect: allow   # history about yourself is yours to record
+  - id: U07
+    category: trust
+    actor: agent:codex-rem
+    adversarial: true
+    ops: [{op: update_summary, entity: tool:neo4j, summary: "Deprecated by the owner; migrate off it."}]
+    expect: review  # filling an empty summary on an owner-created entity is still speaking for the owner
+  - id: T08
+    category: temporal
+    actor: human:sergio
+    adversarial: true
+    ops: [{op: assert, subject: project:lattice, predicate: status, value: idea, valid_from: "0999-01-01"}]
+    expect: invalid # pre-1900 dates broke ordering (3-digit years); now rejected

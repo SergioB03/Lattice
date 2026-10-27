@@ -32,6 +32,11 @@ what), and its history (nothing silently rewritten).
 | XSS via stored text in the UI | All rendering goes through `textContent`, plus a restrictive Content-Security-Policy |
 | Cypher injection via predicate or type names | Identifiers are regex-validated before interpolation. Values are always parameters |
 | Engine crash or hang | Command engines fail closed (deny) after 10 s |
+| Agent swaps the policy engine (`--engine yes-to-everything`) | No such flag. The engine is part of the owner-signed config (`lattice engine …`), and a command engine's id includes a hash of its command |
+| Forged decision clock (`now` set to dodge backdating checks or rate limits) | The ledger clock is monotonic, and the audit requires each decision's `now` to equal its event time |
+| Rewritten genesis roles under the same passphrase | The genesis (roles, schema, owner) is signed with the owner key and checked by `ledger audit` |
+| Owner signature reused on swapped content | Signatures cover the whole proposal body, and the audit recomputes every content digest and proposal id |
+| Ledger bloat / long write locks from huge proposals | Size (256 KB), op count (200) and nesting depth are checked before anything is written |
 
 ## What's NOT enforced (be honest)
 

@@ -124,16 +124,19 @@ class Handler(BaseHTTPRequestHandler):
                 parts = u.path.strip("/").split("/")
                 if len(parts) == 4 and parts[:2] == ["api", "proposals"] and parts[3] in ("approve", "reject"):
                     who = self.lat.owner  # only the owner holds the passphrase
+                    if not isinstance(body, dict) or not isinstance(body.get("passphrase", ""), str):
+                        return self._send(400, {"error": "body must be an object with a string passphrase"})
                     if parts[3] == "approve":
-                        return self._send(200, self.lat.approve(parts[2], who, body.get("passphrase", "")))
+                        return self._send(200, self.lat.approve(parts[2], who, body.get("passphrase", ""),
+                                                                seen_decision=str(body.get("decision", ""))))
                     return self._send(200, self.lat.reject(parts[2], who, body.get("passphrase", ""), body.get("reason", "")))
                 if u.path == "/api/propose":
                     return self._send(200, self.lat.propose(self.lat.owner, body["ops"], body.get("justification", ""),
                                                             passphrase=body.get("passphrase")))
         except AuthError as exc:
             return self._send(401, {"error": str(exc)})
-        except (LatticeError, ValueError, KeyError) as exc:
-            return self._send(400, {"error": str(exc)})
+        except (LatticeError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
+            return self._send(400, {"error": str(exc)[:300]})
         self._send(404, {"error": "not found"})
 
 

@@ -6,7 +6,6 @@ import argparse
 import getpass
 import json
 import os
-import shlex
 import sys
 from pathlib import Path
 
@@ -48,11 +47,7 @@ def _result(res: dict) -> None:
 
 
 def _open(ns, create: bool = False) -> Lattice:
-    engine = None
-    if getattr(ns, "engine", None):
-        from .policy import CommandEngine
-        engine = CommandEngine("custom", shlex.split(ns.engine))
-    lat = Lattice.open(ns.db, engine=engine, create=create)
+    lat = Lattice.open(ns.db, create=create)  # the engine comes from the owner-signed config, never a flag
     if not create and not lat.initialized:
         raise LatticeError(f"{ns.db} is not initialized; run `lattice init`")
     return lat
@@ -169,7 +164,15 @@ def cmd_review(ns) -> None:
         return _out(st)
     who = ns.as_actor or lat.owner
     if ns.action == "approve":
-        _result(lat.approve(ns.id, who, _passphrase(ns)))
+        item = next((p for p in lat.list_proposals("pending", limit=500) if p["proposal_id"] == ns.id), None)
+        if item is None:
+            raise LatticeError(f"{ns.id} is not pending")
+        print(f"{BOLD}{ns.id}{RESET} by {MAGENTA}{item['actor']}{RESET}; you are approving these findings:")
+        for f in item["findings"]:
+            print(f"  {YELLOW}{f['rule_id']}{RESET}: {f['detail']}")
+        for op in item["proposal"]["ops"]:
+            print(f"  {DIM}{json.dumps(op, ensure_ascii=False)}{RESET}")
+        _result(lat.approve(ns.id, who, _passphrase(ns), seen_decision=item["decision_digest"]))
     elif ns.action == "reject":
         _result(lat.reject(ns.id, who, _passphrase(ns), ns.reason or "rejected"))
 
@@ -260,6 +263,21 @@ def cmd_neo4j(ns) -> None:
     _out(sync_from_env(_open(ns), rebuild=ns.rebuild))
 
 
+def cmd_engine(ns) -> None:
+    lat = _open(ns)
+    if ns.action == "show":
+        return _out(lat.config.data.get("engine", {"kind": "builtin"}) | {"id": lat.engine.id})
+    data = lat.config.data
+    if ns.action == "builtin":
+        data["engine"] = {"kind": "builtin"}
+    else:
+        if not ns.name or not ns.argv:
+            raise LatticeError("usage: lattice engine command NAME -- PROGRAM [ARGS...]")
+        data["engine"] = {"kind": "command", "name": ns.name, "argv": ns.argv}
+    lat.set_config(data, _passphrase(ns) if lat.owner_secured else "")
+    print(f"{GREEN}engine is now{RESET} {lat.engine.id}")
+
+
 def cmd_voters(ns) -> None:
     lat = _open(ns)
     if ns.action == "list":
@@ -283,8 +301,11 @@ def cmd_voters(ns) -> None:
 
 def cmd_mcp_config(ns) -> None:
     """Print client config using this interpreter's absolute path, so it works without PATH or venv activation."""
+    from .config import validate_actor_id
     db = str(Path(ns.db).resolve())
-    actor = ns.actor_id
+    actor = validate_actor_id(ns.actor_id)
+    if not actor.startswith("agent:"):
+        raise LatticeError("MCP servers are for agents: use agent:<name>")
     py = sys.executable
     args = ["-m", "lattice.mcp_server", "--db", db]
     name = "lattice-" + actor.split(":")[1]
@@ -303,7 +324,6 @@ def cmd_mcp_config(ns) -> None:
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="lattice", description="Lattice: a governed knowledge graph for humans and agents.")
     ap.add_argument("--db", default=default_db_path(), help="database path (env LATTICE_DB; default .lattice/lattice.db)")
-    ap.add_argument("--engine", default="", help="external policy engine command (e.g. 'skylr graph evaluate')")
     sub = ap.add_subparsers(dest="cmd", required=True)
     me = os.environ.get("LATTICE_ACTOR", "")
 
@@ -403,6 +423,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("action", choices=["sync"])
     s.add_argument("--rebuild", action="store_true", help="wipe Lattice nodes in Neo4j and replay from seq 0")
     s.set_defaults(fn=cmd_neo4j)
+
+    s = sub.add_parser("engine", help="show or change the policy engine (owner only; e.g. Skylr)")
+    s.add_argument("action", choices=["show", "builtin", "command"])
+    s.add_argument("name", nargs="?", default="")
+    s.add_argument("argv", nargs=argparse.REMAINDER, default=[])
+    s.set_defaults(fn=cmd_engine)
 
     s = sub.add_parser("voters", help="who may vote in multi-vendor consensus (owner only)")
     s.add_argument("action", choices=["list", "add", "remove"])

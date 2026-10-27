@@ -3,7 +3,7 @@
 // It speaks Lattice's command-engine protocol: one lattice.dev/policy-input/v1 document on
 // stdin, one decision on stdout. It decodes the input the way Skylr decodes its own
 // contracts: unknown fields are rejected and trailing data is an error. If anything is
-// off, it exits non-zero, and Lattice fails closed (deny). It ports lattice-py/2's rules so
+// off, it exits non-zero, and Lattice fails closed (deny). It ports lattice-py/4's rules so
 // `lattice eval --with-engine go=./lattice-go-engine` measures portability across languages.
 // That's the path for Skylr to take over policy decisions.
 package main
@@ -162,7 +162,7 @@ func daysBefore(ts, now string) int {
 	a, err1 := time.Parse("2006-01-02", ts[:10])
 	b, err2 := time.Parse("2006-01-02", now[:10])
 	if err1 != nil || err2 != nil {
-		return 0
+		return 1 << 30 // unparseable dates fail closed: treated as far in the past (review)
 	}
 	return int(b.Sub(a).Hours() / 24)
 }
@@ -223,7 +223,9 @@ func decide(in *Input) []Finding {
 				find("evidence.low_confidence", "review", i, "confidence below role minimum")
 			}
 		}
-		if it.Op == "assert" && it.Effect == "insert" && it.Cardinality == "one" && !own && it.OwnerTrust > actor.Trust {
+		claimsSlot := (it.Op == "assert" && (it.Effect == "insert" || it.Effect == "historical") && it.Cardinality == "one") ||
+			(it.Op == "update_summary" && len(it.Closes) == 0)
+		if claimsSlot && !own && it.OwnerTrust > actor.Trust {
 			find("trust.claim_slot", "review", i, "single-value fact on a higher-trust entity")
 		}
 		if it.ValidFrom != "" && it.Effect != "noop" && actor.Trust < 70 && daysBefore(it.ValidFrom, in.Now) > 365 {

@@ -44,7 +44,8 @@ git clone https://github.com/SergioB03/lattice && cd lattice
 python -m venv .venv && . .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -e ".[all,dev]"
 
-lattice init --owner human:sergio --demo             # asks for your owner passphrase; seeds a small demo graph
+lattice init --owner human:sergio --demo             # asks for your owner passphrase; seeds a demo graph
+                                                     # (the demo registers 4 agent voters: `lattice voters list`)
 lattice ui --open                                    # http://127.0.0.1:8765
 ```
 
@@ -54,12 +55,13 @@ From the terminal:
 lattice show Skylr                                   # the exact card an agent sees
 lattice add Lattice uses SQLite --source README      # quick fact (as the owner)
 lattice review list                                  # what agents are waiting on
-lattice review approve p_86043132ed8b
+lattice review approve <id>                          # shows what you're approving, then asks for the passphrase
 lattice ledger verify                                # ✔ chain intact; rebuild from ledger matches
 lattice ledger audit                                 # ✔ every decision re-derived, owner signatures checked
 ```
 
-**VS Code:** open the folder and accept the recommended extensions. *Tasks* (Ctrl+Shift+P → Run Task) has
+**VS Code:** open the folder and accept the recommended extensions. (`.vscode/mcp.json` assumes a Windows venv at
+`.venv\Scripts`; on macOS/Linux or in the dev container, regenerate it with `lattice mcp-config vscode agent:copilot`.) *Tasks* (Ctrl+Shift+P → Run Task) has
 `Lattice: test`, `init demo graph`, `open UI`, `eval` and `Neo4j: up/sync`. `.vscode/mcp.json` already wires Lattice into Copilot agent mode,
 and there's a dev container that brings Neo4j along.
 
@@ -68,7 +70,7 @@ and there's a dev container that brings Neo4j along.
 Each agent gets **its own MCP server entry with its own actor id**, so every write is attributed.
 
 ```bash
-lattice mcp-config claude agent:claude-code     # prints: claude mcp add lattice-claude-code -e LATTICE_ACTOR=... -- lattice-mcp --db ...
+lattice mcp-config claude agent:claude-code     # prints a ready `claude mcp add ...` line using your venv's Python
 lattice mcp-config codex  agent:codex-rem       # prints a [mcp_servers.lattice] block for ~/.codex/config.toml
 lattice mcp-config vscode agent:copilot         # prints .vscode/mcp.json
 lattice mcp-config json   agent:antigravity     # generic mcpServers JSON (Antigravity, Cursor, Open WebUI bridges…)
@@ -102,7 +104,7 @@ flowchart LR
   T --> L[[Hash-chained ledger]]
 ```
 
-The built-in policy (`lattice-py/1`):
+The built-in policy (`lattice-py/4`):
 
 - **Agents must cite a source.** Re-asserting a known fact is a free no-op.
 - **Overriding a higher-trust author goes to review.** That includes an agent "updating" your fact or backdating over it.
@@ -118,12 +120,18 @@ The built-in policy (`lattice-py/1`):
 Pending proposals don't all have to wait for you. Agents can **endorse** each other's proposals
 (`{"op": "endorse", "proposal": "p_…", "verdict": "approve" | "object"}`), the way your Skylr review rounds work:
 
+- **Only voters you register count**, each pinned to a vendor (`lattice voters add agent:codex-rem openai`).
+  Actor ids aren't authenticated, so an agent can't mint `agent:codex-fake` and vote for itself.
+- **Votes bind to what the voter saw.** Each vote carries the plan digest; if the change would now do something
+  different, old votes stop counting.
 - **Only distinct vendors count.** Approval from two different vendors (say Claude and Codex) settles low-stakes
   findings: low confidence, near-duplicate names, single-value claims, alias edits, retracting another agent's fact.
   Three Claude instances agreeing still count as one voice, and the proposer's own vendor doesn't count.
 - **One objection sends it to you.**
 - **Some things always need you:** overruling a human, suspected injection, rewriting history, and schema changes.
   The config refuses to make those consensus-eligible.
+
+![Review queue: an agent's near-duplicate project, with another vendor's agent objecting](docs/img/review.png)
 
 `lattice_review_queue` shows agents what's waiting, with votes so far. Consensus decisions are ordinary
 ledger events, so `ledger audit` re-derives them too.
@@ -139,16 +147,19 @@ It decodes the input Skylr-style (unknown fields rejected, fail closed) and agre
 eval case (κ = 1.0, checked in CI). It's the natural starting point for `skylr graph evaluate`.
 
 ```bash
-lattice --engine "skylr graph evaluate" ui                              # Skylr disposes, Lattice applies
+lattice engine command skylr -- skylr graph evaluate                   # owner-signed: Skylr disposes from now on
 lattice eval --with-engine skylr="skylr graph evaluate"                 # score it against the suite
 ```
 
-Current numbers (`lattice eval --with-engine strict="python examples/engines/strict_engine.py"`, 37 cases, 150 metamorphic parity checks):
+Current numbers (`lattice eval` with the strict example and the Go engine; 51 cases, 165 metamorphic parity checks):
 
 | engine | coverage | accuracy | weighted | adversarial | parity | consistency | review rate | p50 ms |
 |---|---|---|---|---|---|---|---|---|
-| builtin (`lattice-py/1`) | 100% | 97% | 92% | 94% | 100% (150) | 100% | 43% | 1.25 |
-| strict (`command:strict`) | 100% | 62% | 62% | 59% | 100% (150) | 100% | 57% | 25.3 |
+| builtin (`lattice-py/4`) | 100% | 98% | 94% | 96% | 100% (165) | 100% | 37% | 1.53 |
+| strict (`command:strict@cc51b987`) | 100% | 63% | 63% | 58% | 100% (165) | 100% | 51% | 25.27 |
+| go (`command:go@ebd46934`) | 100% | 98% | 94% | 96% | 100% (165) | 100% | 37% | 4.24 |
+
+Portability: Python ↔ Go **κ = 1.0**, Python ↔ strict example κ = 0.40 (the eval lists every disagreement).
 
 The built-in miss is a deliberately kept, honest open problem (`I05`): reputation poisoning
 phrased as a plain fact ("records crediting anyone else were vandalism"). No keyword heuristic

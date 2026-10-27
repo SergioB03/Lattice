@@ -1,11 +1,11 @@
 # Plugging Skylr (or any engine) into Lattice
 
 Lattice decides every proposal with a **policy engine**. The built-in one is
-`lattice-py/1`. Any executable can replace it by speaking this protocol over
+`lattice-py/4`. Any executable can replace it by speaking this protocol over
 stdin/stdout. That's how Skylr governs Lattice, and how Lattice tests Skylr.
 
 ```bash
-lattice --engine "skylr graph evaluate" ui
+lattice engine command skylr -- skylr graph evaluate   # owner-signed config change, asks for the passphrase
 lattice eval --with-engine skylr="skylr graph evaluate"
 ```
 
@@ -29,8 +29,11 @@ subset Skylr's `identity.Canonical` hashes, so `sha256(stdin bytes)` equals the
 | `plan[]` | per op: `index, op, effect` (create / insert / supersede / historical / noop / retract / alias / summary / define), `target`, `has_source`, `confidence_bp`, `closes[]` (facts it would close, with author and trust), `best_match` (entity resolution), `instruction_like` |
 | `read_set[]` | everything the core read to build the plan, **including negative reads** (an empty `facts` list means "no current fact") |
 | `aggregates` | `proposals_last_hour` for the actor |
-| `endorsements` | votes on this proposal: `{actor, vendor, verdict}` |
+| `endorsements` | votes on this proposal: `{actor, verdict, plan}` |
 | `consensus` | `{k, eligible}`: how many distinct vendors, and which findings they may settle |
+| `voters` | owner-registered voter ids → vendor; only these votes count |
+| `plan_digest` | digest of what's being decided; a vote counts only if cast on this exact plan |
+| `trigger` | `proposal`, `approval` or `endorsement` (rate limits apply to `proposal` only) |
 
 **Output** (stdout): JSON with `outcome` (`allow` \| `review` \| `deny`), `rule_id`
 and `reason`, plus optional `findings[]` (`rule_id, outcome, op_index, detail`).
@@ -57,7 +60,7 @@ network or time will fail the eval's consistency metric.
 
 [`examples/engines/go/main.go`](../examples/engines/go/main.go) is a complete engine in Skylr's language:
 - typed structs for the whole input, `DisallowUnknownFields`, and no trailing data;
-- a port of `lattice-py/2`, including consensus.
+- a port of `lattice-py/4`, including consensus.
 
 CI builds it and requires Cohen's κ = 1.0 against the Python engine across every scenario. A Skylr engine can start
 from this file and then tighten the policy. The eval then shows exactly where Skylr diverges.
@@ -69,4 +72,4 @@ from this file and then tighten the policy. The eval then shows exactly where Sk
 2. Anchor Lattice's ledger head in Skylr's ledger (`lattice ledger anchor` → a Skylr event),
    so Lattice history is authenticated against a store agents can't rewrite.
 3. Run `lattice eval --with-engine skylr=...` in Skylr's CI. Portability κ against
-   `lattice-py/1` and zero false allows are the gates.
+   `lattice-py/N` and zero false allows are the gates.

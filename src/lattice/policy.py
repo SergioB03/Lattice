@@ -55,13 +55,16 @@ def make_decision(engine_id: str, policy_input: dict[str, Any], findings: list[d
 
 def _days_before(ts: str, now: str) -> int:
     from datetime import date
-    return (date.fromisoformat(now[:10]) - date.fromisoformat(ts[:10])).days
+    try:
+        return (date.fromisoformat(now[:10]) - date.fromisoformat(ts[:10])).days
+    except ValueError:
+        return 10**6  # unparseable dates fail closed: treated as far in the past (review)
 
 
 class BuiltinEngine:
     """Reference policy. Change the version string whenever semantics change."""
 
-    id = "lattice-py/3"  # /3: registered voters, plan-bound votes, withdraw, no rate limit on re-decide
+    id = "lattice-py/4"  # /4: claim_slot also covers backdated facts and empty summaries
 
     def decide(self, inp: dict[str, Any]) -> dict[str, Any]:
         if inp.get("kind") != INPUT_KIND:
@@ -107,8 +110,9 @@ class BuiltinEngine:
                 if item["confidence_bp"] < role["min_confidence_bp"] and not own:
                     find("evidence.low_confidence", "review", i,
                          f"Confidence {item['confidence_bp'] // 100} is below this role's minimum of {role['min_confidence_bp'] // 100} (scale 0-100).")
-            if op == "assert" and item["effect"] == "insert" and item["cardinality"] == "one" and not own \
-                    and item["owner_trust"] > actor["trust"]:
+            claims_slot = (op == "assert" and item["effect"] in ("insert", "historical") and item["cardinality"] == "one") \
+                or (op == "update_summary" and not item["closes"])
+            if claims_slot and not own and item["owner_trust"] > actor["trust"]:
                 find("trust.claim_slot", "review", i,
                      f"Sets a single-value fact on an entity created by a higher-trust actor (trust {item['owner_trust']} > {actor['trust']}).")
             if item["valid_from"] and item["effect"] != "noop" and actor["trust"] < 70 and _days_before(item["valid_from"], inp["now"]) > 365:
@@ -185,7 +189,8 @@ class CommandEngine:
 
     @property
     def id(self) -> str:
-        return f"command:{self.name}"
+        # The command itself is part of the identity, so a different program can't pass as a recorded engine.
+        return f"command:{self.name}@{digest(list(self.argv))[7:15]}"
 
     def decide(self, inp: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -211,6 +216,13 @@ class CommandEngine:
         except Exception as exc:  # noqa: BLE001 - every failure must fail closed
             return make_decision(self.id, inp, [{"rule_id": "engine.error", "outcome": "deny", "op_index": -1,
                                                  "detail": f"Engine failed, denying (fail closed): {exc}"}])
+
+
+def engine_from_config(spec: dict[str, Any] | None) -> Engine:
+    """The engine is part of the owner-signed config, not a command-line flag an agent could pass."""
+    if not spec or spec.get("kind", "builtin") == "builtin":
+        return BuiltinEngine()
+    return CommandEngine(spec["name"], list(spec["argv"]), float(spec.get("timeout_s", 10)))
 
 
 def timed_decide(engine: Engine, inp: dict[str, Any]) -> tuple[dict[str, Any], float]:

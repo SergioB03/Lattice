@@ -18,7 +18,7 @@ from typing import Any
 from . import ledger, store
 from .canonical import CanonicalError, digest, format_ts, now_ts, parse_ts
 from .config import OPS, Config, validate_actor_id
-from .policy import INPUT_KIND, BuiltinEngine, Engine
+from .policy import INPUT_KIND, BuiltinEngine, Engine, engine_from_config
 from .schema import Schema, SchemaError
 from .text import (
     clean,
@@ -47,6 +47,9 @@ OP_FIELDS: dict[str, tuple[set[str], set[str]]] = {  # op -> (required, optional
 ONE_LINE = {"type", "name", "aliases", "ref", "subject", "object", "predicate", "fact", "entity", "alias", "source",
             "valid_from", "cardinality", "domain", "range", "proposal", "verdict", "plan"}
 CLIENT_FIELDS = {"model", "run_id", "tool"}
+MAX_PROPOSAL_BYTES = 256 * 1024  # checked before anything is written: the ledger is append-only
+MAX_OPS = 200
+MAX_DEPTH = 12
 RUN_ID = "lattice"
 
 
@@ -82,15 +85,17 @@ def parse_as_of(text: str) -> str:
         raise LatticeError(f"as_of: {inv.message}") from None
 
 
-def _sanitize(value: Any, key: str = "") -> Any:
+def _sanitize(value: Any, key: str = "", depth: int = 0) -> Any:
     """Clean every string in submitted ops *before* hashing/storing, so reviewers see what gets applied."""
+    if depth > MAX_DEPTH:
+        raise LatticeError(f"ops are nested deeper than {MAX_DEPTH} levels")
     if isinstance(value, str):
         out = clean(value)
         return " ".join(out.split()) if key in ONE_LINE else out
     if isinstance(value, list):
-        return [_sanitize(v, key) for v in value]
+        return [_sanitize(v, key, depth + 1) for v in value]
     if isinstance(value, dict):
-        return {k: _sanitize(v, k) for k, v in value.items()}
+        return {k: _sanitize(v, k, depth + 1) for k, v in value.items()}
     return value
 
 
@@ -122,8 +127,20 @@ def _mac(key: bytes, value: Any) -> str:
 class Lattice:
     def __init__(self, conn: sqlite3.Connection, engine: Engine | None = None, path: str = ":memory:"):
         self.conn = conn
-        self.engine: Engine = engine or BuiltinEngine()
+        self._engine_override = engine  # library/test use only; the CLI, MCP server and UI use the configured engine
         self.db_path = path
+
+    @property
+    def engine(self) -> Engine:
+        if self._engine_override is not None:
+            return self._engine_override
+        if not self.initialized:
+            return BuiltinEngine()
+        return engine_from_config(self.config.data.get("engine"))
+
+    @engine.setter
+    def engine(self, value: Engine | None) -> None:
+        self._engine_override = value
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -157,6 +174,8 @@ class Lattice:
         schema = schema or Schema.default()
         payload = {"schema": schema.to_json(), "config": cfg.data, "owner": owner,
                    "owner_hash": _hash_passphrase(passphrase) if passphrase else "", "insecure_dev": passphrase is None}
+        if passphrase:  # sign the genesis so its roles/schema can't be rewritten under the same passphrase
+            payload["owner_mac"] = _mac(_mac_key(passphrase, payload["owner_hash"]), _genesis_signed(payload))
         self._tx(lambda ts: store.append_and_apply(self.conn, run_id=RUN_ID, type="lattice.initialized", actor=owner,
                                                    payload=payload, ts=ts), now)
 
@@ -165,6 +184,9 @@ class Lattice:
 
     def _tx(self, fn, now: str | None = None):
         ts = now or now_ts()
+        row = self.conn.execute("SELECT ts FROM events ORDER BY seq DESC LIMIT 1").fetchone()
+        if row and ts < row[0]:
+            ts = row[0]  # the ledger clock never runs backwards (audit relies on it)
         self.conn.execute("BEGIN IMMEDIATE")
         try:
             out = fn(ts)
@@ -258,6 +280,8 @@ class Lattice:
         key = self._owner_key(actor, passphrase or "") if actor.startswith("human:") else None
         if not isinstance(ops, list) or not ops:
             raise LatticeError("ops must be a non-empty list")
+        if len(ops) > MAX_OPS:
+            raise LatticeError(f"at most {MAX_OPS} ops per proposal")
         ops = _sanitize(ops)
         client = {k: clean(str(v))[:120] for k, v in (client or {}).items() if k in CLIENT_FIELDS}
         body = {
@@ -270,6 +294,8 @@ class Lattice:
         }
         try:
             content_digest = digest({"actor": actor, "ops": ops, "justification": body["justification"]})
+            if len(json.dumps(body, ensure_ascii=False).encode()) > MAX_PROPOSAL_BYTES:
+                raise LatticeError(f"proposal is larger than {MAX_PROPOSAL_BYTES // 1024} KB; split it")
         except CanonicalError as exc:
             raise LatticeError(f"proposal is not valid canonical JSON: {exc} (confidence is an integer 0-100)") from exc
         return self._tx(lambda ts: self._propose_tx(body, content_digest, ts, key), now)
@@ -295,7 +321,7 @@ class Lattice:
         pid = "p_" + digest({"content": content_digest, "seq": seq + 1})[7:19]
         payload = {"id": pid, "content_digest": content_digest, "proposal": body}
         if key:
-            payload["owner_mac"] = _mac(key, {"id": pid, "content_digest": content_digest})
+            payload["owner_mac"] = _mac(key, {"id": pid, "content_digest": content_digest, "proposal": body})
         store.append_and_apply(self.conn, run_id=RUN_ID, type="proposal.received", actor=actor, payload=payload, ts=ts)
         return self._decide_and_apply(pid, body, ts, approval=None, key=None)
 
@@ -399,7 +425,8 @@ class Lattice:
                                 (proposal_id,)).fetchone()
         return json.loads(row[0]) if row else None
 
-    def approve(self, proposal_id: str, approver: str, passphrase: str, now: str | None = None) -> dict[str, Any]:
+    def approve(self, proposal_id: str, approver: str, passphrase: str, now: str | None = None,
+                seen_decision: str = "") -> dict[str, Any]:
         """Human review. Re-plans and re-decides on *current* state. Only the findings the human saw are
         acknowledged; anything new sends the proposal back to the queue."""
         validate_actor_id(approver)
@@ -411,6 +438,11 @@ class Lattice:
                 raise LatticeError(f"no proposal {proposal_id}")
             if row[1] != "pending":
                 raise LatticeError(f"proposal {proposal_id} is {row[1]}, not pending")
+            if seen_decision:
+                latest = self.conn.execute("SELECT digest FROM decisions WHERE proposal_id=? ORDER BY seq DESC LIMIT 1",
+                                           (proposal_id,)).fetchone()
+                if not latest or latest[0] != seen_decision:
+                    raise LatticeError(f"{proposal_id} was re-decided since you looked; reload and review it again")
             seen = self._latest_decision(proposal_id) or {"findings": []}
             ack = sorted({(f["rule_id"], f["op_index"]) for f in seen["findings"] if f["outcome"] == "review"})
             who = self.config.actor(approver)
@@ -565,6 +597,8 @@ class Lattice:
                 except SchemaError as exc:
                     raise _Invalid(i, str(exc)) from exc
                 name = self._str(op, "name", i, limit=200)
+                if not norm_key(name):
+                    raise _Invalid(i, "name needs at least one letter or digit")
                 summary = self._str(op, "summary", i, required=False)
                 aliases = op.get("aliases", [])
                 if not isinstance(aliases, list) or len(aliases) > 20 or not all(isinstance(a, str) for a in aliases):
@@ -806,6 +840,8 @@ class Lattice:
             st = self.proposal_status(pid)
             st["proposal"] = json.loads(self.conn.execute("SELECT body FROM proposals WHERE id=?", (pid,)).fetchone()[0])
             d = self._latest_decision(pid)
+            dd = self.conn.execute("SELECT digest FROM decisions WHERE proposal_id=? ORDER BY seq DESC LIMIT 1", (pid,)).fetchone()
+            st["decision_digest"] = dd[0] if dd else ""
             st["findings"] = [f for f in (d or {}).get("findings", []) if f["outcome"] != "allow"]
             st["consensus"] = next((f["detail"] for f in (d or {}).get("findings", []) if f["rule_id"].startswith("consensus.")), "")
             inp = self.conn.execute("SELECT input FROM decisions WHERE proposal_id=? ORDER BY seq DESC LIMIT 1", (pid,)).fetchone()
@@ -1177,6 +1213,7 @@ class Lattice:
         so forged approvals/human writes are caught even though they hash-chain correctly."""
         ledger.verify(self.conn)
         pool = {self.engine.id: self.engine, BuiltinEngine.id: BuiltinEngine()} | (engines or {})
+        last_ts = ""
         replay = Lattice(store.connect(":memory:"), BuiltinEngine())
         rc = replay.conn
         report = {"events": 0, "decisions_checked": 0, "applies_checked": 0, "macs_verified": 0,
@@ -1200,14 +1237,35 @@ class Lattice:
         for ev in ledger.iter_events(self.conn):
             report["events"] += 1
             p = ev.payload
+            if ev.ts < last_ts:
+                problem(ev, f"timestamp {ev.ts} runs backwards (previous {last_ts})")
+            last_ts = max(last_ts, ev.ts)
             rc.execute("BEGIN IMMEDIATE")
             try:
-                if ev.type == "proposal.received" and p["proposal"]["actor"].startswith("human:") and \
-                        store.get_meta(rc, "owner_hash"):
-                    check_mac(ev, {"id": p["id"], "content_digest": p["content_digest"]})
+                if ev.type == "lattice.initialized":
+                    if p.get("owner_hash") and passphrase and _check_passphrase(passphrase, p["owner_hash"]):
+                        mac = p.get("owner_mac", "")
+                        if not mac or not hmac.compare_digest(mac, _mac(_mac_key(passphrase, p["owner_hash"]), _genesis_signed(p))):
+                            problem(ev, "genesis (roles, schema, owner) is not signed by the owner passphrase")
+                        else:
+                            report["macs_verified"] += 1
+                    elif passphrase and not p.get("owner_hash"):
+                        problem(ev, "ledger was created in insecure dev mode: its genesis config isn't owner-signed")
+                    pool.setdefault(engine_from_config(p["config"].get("engine")).id, engine_from_config(p["config"].get("engine")))
+                elif ev.type == "config.changed":
+                    pool.setdefault(engine_from_config(p["config"].get("engine")).id, engine_from_config(p["config"].get("engine")))
+                if ev.type == "proposal.received":
+                    body_ = p["proposal"]
+                    cd = digest({"actor": body_["actor"], "ops": body_["ops"], "justification": body_["justification"]})
+                    if cd != p["content_digest"] or p["id"] != "p_" + digest({"content": cd, "seq": ev.seq})[7:19]:
+                        problem(ev, "proposal body doesn't match its content digest / id")
+                    if body_["actor"].startswith("human:") and store.get_meta(rc, "owner_hash"):
+                        check_mac(ev, {"id": p["id"], "content_digest": p["content_digest"], "proposal": body_})
                 elif ev.type == "decision.recorded":
                     report["decisions_checked"] += 1
                     inp, rec = p["input"], p["decision"]
+                    if inp["now"] != ev.ts:
+                        problem(ev, f"decision clock {inp['now']} differs from the event time {ev.ts}")
                     body = json.loads(rc.execute("SELECT body FROM proposals WHERE id=?", (p["proposal_id"],)).fetchone()[0])
                     approval = inp["approval"] if inp["approval"]["by"] else None
                     try:
@@ -1318,6 +1376,10 @@ def _effect_summary(e: dict[str, Any]) -> str:
     if k == "proposal_withdrawn":
         return f"withdrew {e['proposal']}"
     return f"{k} {e.get('name', '')}"
+
+
+def _genesis_signed(payload: dict[str, Any]) -> str:
+    return digest({k: payload[k] for k in ("schema", "config", "owner", "owner_hash", "insecure_dev")})
 
 
 def plan_digest(plan: list[dict[str, Any]]) -> str:

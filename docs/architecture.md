@@ -67,7 +67,7 @@ agent/human ──propose(ops)──▶ validate (shape, schema, references)
 * The engine is a **pure function**: it reads no clock, files or network. Its
   input is recorded by digest, so any decision can be **replayed** and must
   reproduce the same canonical bytes. This mirrors Skylr's L2 replay.
-* Engines are pluggable: `builtin` (Python, versioned `lattice-py/1`) or
+* Engines are pluggable through the owner-signed config (`lattice engine …`): `builtin` (Python, versioned `lattice-py/N`) or
   `command` (any executable speaking the JSON-over-stdio protocol in
   [skylr-integration.md](skylr-integration.md)). That's where Skylr plugs in.
 * Apply is atomic: graph rows and ledger events commit together or not at all.

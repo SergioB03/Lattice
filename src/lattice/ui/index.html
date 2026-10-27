@@ -335,8 +335,10 @@ function opSentence(op){
     default: return `${op.op} ${op.name||""}`;
   }
 }
+const decisions = {};
 async function loadQueue(){
   const items = await api("/api/proposals?status=pending");
+  for (const p of items) decisions[p.proposal_id] = p.decision_digest;
   $("#qcount").textContent = items.length || "";
   if (!items.length){ $("#queue").replaceChildren(h("div",{class:"empty"},"Nothing waiting on you.",h("p",{text:"When an agent's write needs a human, it shows up here with the rule that flagged it."}))); return; }
   const planLine = (op, item) => {
@@ -360,7 +362,7 @@ async function loadQueue(){
     h("ol",null,...p.proposal.ops.map((o,i)=>opItem(p,o,i))),
     (p.endorsements.length || p.consensus) ? h("div",{class:"votes"},
       ...p.endorsements.map(e=>h("span",{class:"vote "+e.verdict, title:e.reason||""}, who(e.actor), e.verdict==="approve"?" approves":" objects")),
-      p.consensus ? h("span",{class:"muted",text:p.consensus}) : null) : null
+      (p.consensus && !p.findings.some(f=>f.detail===p.consensus)) ? h("span",{class:"muted",text:p.consensus}) : null) : null
   )));
 }
 function askPass(title, label){
@@ -374,7 +376,7 @@ async function decide(id, action){
   const pw = await askPass(action==="approve"?"Approve proposal":"Reject proposal", action==="approve"?"Approve":"Reject");
   if (!pw) return;
   try{
-    const r = await api(`/api/proposals/${id}/${action}`,{method:"POST",body:JSON.stringify({passphrase:pw, reason:"rejected in UI"})});
+    const r = await api(`/api/proposals/${id}/${action}`,{method:"POST",body:JSON.stringify({passphrase:pw, reason:"rejected in UI", decision:(decisions[id]||"")})});
     toast(r.status==="applied" ? `Approved and applied ${id}` : r.status==="rejected" ? `Rejected ${id}` : `${id}: ${r.status}${r.errors? " — "+r.errors[0].error : ""}`);
   }catch(e){ if (/passphrase/.test(e.message)) passphrase=""; toast(e.message); }
   loadQueue(); refreshSeal(); if (current) openEntity(current);

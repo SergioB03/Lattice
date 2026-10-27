@@ -10,7 +10,7 @@ lowercase letters, digits, `.`, `_` and `-`. The server refuses `human:` actors.
 
 | Client | Setup |
 |---|---|
-| Claude Code | `claude mcp add lattice -e LATTICE_ACTOR=agent:claude-code -- lattice-mcp --db /path/lattice.db` |
+| Claude Code | run `lattice mcp-config claude agent:claude-code` and paste the printed `claude mcp add …` line |
 | Codex | add the block from `lattice mcp-config codex agent:codex-rem` to `~/.codex/config.toml` |
 | VS Code (Copilot agent mode) | `.vscode/mcp.json` is in the repo; change `LATTICE_ACTOR` if you like |
 | Antigravity / Cursor / others | `lattice mcp-config json agent:<name>` |

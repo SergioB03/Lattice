@@ -74,6 +74,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"match": "service:*", "role": "observer"},
     ],
     "resolution": {"duplicate_threshold_bp": 9500, "review_threshold_bp": 8500},
+    # Which policy engine decides. Part of the owner-signed config so nobody can swap it per command.
+    # {"kind": "command", "name": "skylr", "argv": ["skylr", "graph", "evaluate"], "timeout_s": 10}
+    "engine": {"kind": "builtin"},
     # Which company/runtime an agent belongs to. Consensus counts *vendors*, not agents,
     # so three Claude instances agreeing is one voice. First match wins.
     "vendors": [
@@ -159,6 +162,13 @@ class Config:
         for rule in d.get("vendors", []):
             if set(rule) != {"match", "vendor"} or not str(rule["vendor"]).isidentifier():
                 raise ConfigError(f"vendor rule {rule} needs match and a simple vendor name")
+        eng = d.get("engine", {"kind": "builtin"})
+        if eng.get("kind") == "command":
+            if set(eng) - {"kind", "name", "argv", "timeout_s"} or not str(eng.get("name", "")).isidentifier() \
+                    or not isinstance(eng.get("argv"), list) or not eng["argv"] or not all(isinstance(a, str) for a in eng["argv"]):
+                raise ConfigError("command engine needs name (identifier) and argv (non-empty list of strings)")
+        elif eng != {"kind": "builtin"}:
+            raise ConfigError('engine must be {"kind": "builtin"} or a command engine')
         seen_voters = set()
         for v in d.get("voters", []):
             if set(v) != {"actor", "vendor"} or not str(v["vendor"]).isidentifier() or v["vendor"] in ("human", "unknown"):
