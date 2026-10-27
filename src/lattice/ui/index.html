@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lattice</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cg fill='none' stroke='%23E3B55B' stroke-width='2.4'%3E%3Cpath d='M6 6L26 26M26 6L6 26M16 3V29M3 16H29'/%3E%3C/g%3E%3Ccircle cx='16' cy='16' r='4' fill='%23E3B55B'/%3E%3C/svg%3E">
+<style>
+:root{
+  --ink:#101B33; --panel:#16244A; --raise:#1D2E5A; --line:#2B3D6B; --paper:#ECEFF6; --muted:#93A0BF;
+  --brass:#E3B55B; --glass:#6FD3B8; --ember:#F2A65A; --coral:#FF6F7D; --sky:#8AB4FF;
+  --serif:"Iowan Old Style","Palatino Linotype","Book Antiqua",Palatino,Georgia,serif;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--ink);color:var(--paper);font:15px/1.5 var(--sans);
+  background-image:radial-gradient(circle at 1px 1px,rgba(138,180,255,.07) 1px,transparent 0);background-size:22px 22px}
+a{color:inherit}
+button,input,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.mono{font-family:var(--mono);font-size:12.5px}
+.muted{color:var(--muted)}
+
+/* top bar */
+header{display:grid;grid-template-columns:auto minmax(200px,560px) 1fr auto;gap:20px;align-items:center;
+  padding:14px 24px;border-bottom:1px solid var(--line);background:rgba(16,27,51,.92);position:sticky;top:0;z-index:5;backdrop-filter:blur(6px)}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--serif);font-size:22px;letter-spacing:.01em}
+.brand svg{width:26px;height:26px}
+.search{position:relative}
+.search input{width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 12px 9px 36px}
+.search svg{position:absolute;left:11px;top:50%;translate:0 -50%;width:16px;height:16px;stroke:var(--muted)}
+nav{display:flex;gap:4px;justify-self:start}
+nav button{background:none;border:0;padding:8px 12px;border-radius:8px;color:var(--muted);cursor:pointer;display:flex;gap:8px;align-items:center}
+nav button[aria-current="page"]{color:var(--paper);background:var(--panel)}
+.badge{min-width:20px;padding:0 6px;border-radius:999px;background:var(--ember);color:#2a1606;font-size:12px;font-weight:700;text-align:center}
+.badge:empty{display:none}
+.seal{display:flex;align-items:center;gap:10px;padding:6px 12px;border:1px solid var(--line);border-radius:999px;background:var(--panel);cursor:pointer}
+.seal .dot{width:9px;height:9px;border-radius:50%;background:var(--brass);box-shadow:0 0 0 3px rgba(227,181,91,.18)}
+.seal.bad .dot{background:var(--coral);box-shadow:0 0 0 3px rgba(255,111,125,.2)}
+
+main{padding:22px 24px 60px}
+.view{display:none}.view.on{display:block}
+
+/* explore */
+.explore{display:grid;grid-template-columns:240px minmax(0,1fr) minmax(320px,420px);gap:22px;align-items:start}
+.rail h3,.facts h3{font:600 13px/1.2 var(--sans);color:var(--muted);margin:0 0 10px}
+.rail ul{list-style:none;margin:0 0 20px;padding:0}
+.rail li button{width:100%;text-align:left;background:none;border:0;border-radius:8px;padding:7px 9px;cursor:pointer;display:grid;gap:1px}
+.rail li button:hover,.rail li button[aria-current="true"]{background:var(--panel)}
+.rail .nm{font-family:var(--serif);font-size:16px}
+.rail .id{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+
+.hero{background:linear-gradient(180deg,var(--panel),rgba(22,36,74,.4));border:1px solid var(--line);border-radius:18px;padding:26px 28px 10px;min-height:520px}
+.hero h1{font:400 clamp(34px,4.4vw,56px)/1.02 var(--serif);margin:6px 0 10px;letter-spacing:-.01em}
+.kind{display:inline-flex;gap:8px;align-items:center;font-size:13px;color:var(--muted)}
+.kind b{color:var(--paper);font-weight:600;padding:2px 9px;border-radius:999px;border:1px solid var(--line)}
+.summary{max-width:62ch;color:#cfd6e8;margin:0 0 6px;font-size:16px}
+.aliases{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 0}
+.aliases span{font-size:12.5px;padding:2px 8px;border-radius:6px;background:var(--raise);color:#cfd6e8}
+#orbit{width:100%;height:auto;display:block;margin-top:6px}
+#orbit .thread{fill:none;stroke-width:2}
+#orbit .thread.in{stroke-dasharray:5 5}
+#orbit .node{cursor:pointer}
+#orbit .node circle{fill:var(--ink);stroke-width:2}
+#orbit .node:hover circle,#orbit .node:focus circle{fill:var(--raise)}
+#orbit .node text{fill:var(--paper);font:14px var(--serif)}
+#orbit .node .t{fill:var(--muted);font:11px var(--mono)}
+#orbit .pred{fill:var(--muted);font:11.5px var(--sans)}
+#orbit .core circle{fill:var(--brass)}
+#orbit .core text{fill:var(--ink);font:600 13px var(--sans)}
+@media (prefers-reduced-motion:no-preference){
+  #orbit.draw .thread{stroke-dasharray:var(--len);stroke-dashoffset:var(--len);animation:weave .9s cubic-bezier(.3,.7,.2,1) forwards;animation-delay:var(--d)}
+  #orbit.draw .thread.in{animation-name:weavein}
+  @keyframes weave{to{stroke-dashoffset:0}}
+  @keyframes weavein{0%{stroke-dasharray:var(--len);stroke-dashoffset:var(--len)}99%{stroke-dasharray:var(--len);stroke-dashoffset:0}100%{stroke-dasharray:5 5;stroke-dashoffset:0}}
+}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--muted);padding:8px 0 14px}
+.legend i{display:inline-block;width:18px;height:3px;border-radius:2px;vertical-align:middle;margin-right:6px}
+
+.facts{display:grid;gap:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+.fact{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:9px 0;border-top:1px solid rgba(43,61,107,.6)}
+.fact:first-of-type{border-top:0}
+.fact .what{font-size:14.5px}
+.fact .what .p{color:var(--muted)}
+.fact .what button{background:none;border:0;padding:0;font-family:var(--serif);font-size:15.5px;color:var(--sky);cursor:pointer;text-decoration:underline;text-decoration-color:rgba(138,180,255,.35);text-underline-offset:3px}
+.fact .val{font-family:var(--serif);font-size:15.5px}
+.fact .meta{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:12px;color:var(--muted)}
+.who{display:inline-flex;align-items:center;gap:6px;padding:1px 8px 1px 3px;border-radius:999px;background:var(--raise);color:var(--paper)}
+.who i{width:14px;height:14px;border-radius:50%}
+.conf{width:44px;height:5px;border-radius:3px;background:var(--line);overflow:hidden;display:inline-block}
+.conf b{display:block;height:100%;background:var(--glass)}
+.fid{font-family:var(--mono);font-size:11px;color:var(--muted)}
+.past .fact{opacity:.62}
+.past .val,.past .what button{text-decoration:line-through;text-decoration-color:rgba(236,239,246,.35)}
+details summary{cursor:pointer;color:var(--muted);font-size:13px}
+pre.agent{white-space:pre-wrap;background:var(--ink);border:1px solid var(--line);border-radius:10px;padding:12px;font:12px/1.55 var(--mono);color:#cfd6e8;max-height:380px;overflow:auto;margin:10px 0 0}
+.pending{border-color:rgba(242,166,90,.5)}
+.pending h3{color:var(--ember)}
+
+/* review */
+.queue{display:grid;gap:16px;max-width:980px}
+.prop{display:grid;grid-template-columns:1fr auto;gap:12px 20px;background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--ember);border-radius:14px;padding:18px 20px}
+.prop h2{margin:0;font:400 22px/1.2 var(--serif)}
+.prop .why{font-family:var(--serif);font-style:italic;color:#cfd6e8;margin:6px 0 0}
+.prop .rule{grid-column:1/-1;display:flex;gap:10px;align-items:baseline;font-size:14px}
+.prop .rule code{font-family:var(--mono);font-size:12px;color:var(--ember);background:rgba(242,166,90,.1);padding:2px 7px;border-radius:6px}
+.prop ol{grid-column:1/-1;margin:0;padding-left:20px;display:grid;gap:4px}
+.prop .acts{display:flex;gap:8px;align-self:start}
+.btn{border:1px solid var(--line);background:var(--raise);border-radius:9px;padding:8px 14px;cursor:pointer}
+.btn.yes{background:var(--glass);border-color:var(--glass);color:#0b2b24;font-weight:600}
+.btn.no:hover{border-color:var(--coral);color:var(--coral)}
+.empty{max-width:520px;padding:40px 0;font-family:var(--serif);font-size:22px;color:#cfd6e8}
+.empty p{font:15px var(--sans);color:var(--muted)}
+
+/* ledger */
+.chain{position:relative;max-width:880px;padding-left:28px}
+.chain::before{content:"";position:absolute;left:9px;top:8px;bottom:8px;width:2px;background:linear-gradient(var(--brass),rgba(227,181,91,.1))}
+.block{position:relative;display:grid;grid-template-columns:70px 1fr auto;gap:14px;align-items:baseline;padding:10px 14px;margin-bottom:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+.block::before{content:"";position:absolute;left:-24px;top:16px;width:10px;height:10px;border-radius:2px;rotate:45deg;background:var(--ink);border:2px solid var(--brass)}
+.block .seq{font:600 15px var(--mono);color:var(--brass)}
+.block .ty{font-weight:600}
+.block .h{font:11.5px var(--mono);color:var(--muted);text-align:right}
+.toolbar{display:flex;gap:12px;align-items:center;margin:0 0 18px}
+
+.toast{position:fixed;right:20px;bottom:20px;background:var(--raise);border:1px solid var(--line);border-radius:12px;padding:12px 16px;max-width:420px;opacity:0;translate:0 8px;transition:.2s;pointer-events:none}
+.toast.on{opacity:1;translate:0 0}
+dialog{background:var(--panel);color:var(--paper);border:1px solid var(--line);border-radius:14px;padding:22px;width:min(420px,92vw)}
+dialog::backdrop{background:rgba(5,10,22,.6)}
+dialog input{width:100%;background:var(--ink);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin:10px 0 16px}
+dialog h2{margin:0;font:400 22px var(--serif)}
+
+@media (max-width:1100px){.explore{grid-template-columns:1fr}.rail{display:none}header{grid-template-columns:auto 1fr;}nav{grid-column:1/-1;justify-self:stretch}.seal{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><g fill="none" stroke="#E3B55B" stroke-width="2"><path d="M6 6L26 26M26 6L6 26M16 3V29M3 16H29"/></g><circle cx="16" cy="16" r="4" fill="#E3B55B"/></svg>
+    Lattice
+  </div>
+  <label class="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+    <input id="q" type="search" placeholder="Find a person, project, tool or idea" autocomplete="off" aria-label="Search the graph">
+  </label>
+  <nav aria-label="Views">
+    <button data-view="explore" aria-current="page">Explore</button>
+    <button data-view="review">Review <span class="badge" id="qcount"></span></button>
+    <button data-view="ledger">Ledger</button>
+  </nav>
+  <button class="seal" id="seal" title="Verify the ledger"><span class="dot"></span><span class="mono" id="sealtext">ledger</span></button>
+</header>
+
+<main>
+  <section class="view on" id="v-explore">
+    <div class="explore">
+      <aside class="rail">
+        <h3 id="railtitle">Recently added</h3>
+        <ul id="list"></ul>
+      </aside>
+      <article class="hero" id="hero" aria-live="polite"></article>
+      <div class="facts" id="facts"></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-review">
+    <div class="queue" id="queue"></div>
+  </section>
+
+  <section class="view" id="v-ledger">
+    <div class="toolbar"><button class="btn" id="verify">Verify chain and rebuild</button><span id="verifyout" class="muted"></span></div>
+    <div class="chain" id="chain"></div>
+  </section>
+</main>
+
+<dialog id="pp">
+  <form method="dialog">
+    <h2 id="pptitle">Approve proposal</h2>
+    <p class="muted" style="margin:6px 0 0">Reviews need the owner passphrase. It stays in this tab's memory only.</p>
+    <input id="ppin" type="password" autocomplete="current-password" aria-label="Owner passphrase" placeholder="Owner passphrase">
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn yes" value="ok" id="ppok">Approve</button>
+    </div>
+  </form>
+</dialog>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+const $ = s => document.querySelector(s);
+function h(tag, attrs, ...kids){
+  const n = attrs && attrs.svg ? document.createElementNS("http://www.w3.org/2000/svg", tag) : document.createElement(tag);
+  for (const [k,v] of Object.entries(attrs||{})){
+    if (k==="svg") continue;
+    if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else if (k==="text") n.textContent = v;
+    else n.setAttribute(k, v);
+  }
+  for (const c of kids.flat()) if (c!=null && c!==false) n.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return n;
+}
+const api = async (path, opts={}) => {
+  const r = await fetch(path, {...opts, headers:{"Content-Type":"application/json","X-Lattice":"1",...(opts.headers||{})}});
+  const j = await r.json(); if (!r.ok) throw new Error(j.error||r.statusText); return j;
+};
+const PALETTE = ["#8AB4FF","#C79BFF","#6FD3B8","#FF9EC4","#7FE0F0","#B8E07F","#F7A8FF"];
+function actorColor(a){ if (a.startsWith("human:")) return "#E3B55B"; let x=0; for (const c of a) x=(x*31+c.charCodeAt(0))>>>0; return PALETTE[x%PALETTE.length]; }
+const who = a => h("span",{class:"who",title:a}, h("i",{style:`background:${actorColor(a)}`}), a.replace(/^(agent|human|service):/,""));
+let toastT; function toast(msg){ const t=$("#toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove("on"),3600); }
+let passphrase = "";
+let current = "";
+
+/* ---------- navigation ---------- */
+function show(view){
+  document.querySelectorAll("nav button").forEach(b=>b.setAttribute("aria-current", b.dataset.view===view ? "page" : "false"));
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("on", v.id==="v-"+view));
+  if (view==="review") loadQueue(); if (view==="ledger") loadLedger();
+}
+document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>show(b.dataset.view));
+
+/* ---------- explore ---------- */
+function railItem(e){
+  return h("li",null,h("button",{"aria-current": String(e.id===current), onclick:()=>openEntity(e.id)},
+    h("span",{class:"nm",text:e.name}), h("span",{class:"id",text:e.id})));
+}
+async function loadRecent(){ const r = await api("/api/recent"); $("#railtitle").textContent="Recently added"; $("#list").replaceChildren(...r.map(railItem)); }
+let searchT;
+$("#q").addEventListener("input", e=>{
+  clearTimeout(searchT); const v=e.target.value.trim();
+  searchT=setTimeout(async()=>{
+    if (!v) return loadRecent();
+    show("explore");
+    const r = await api("/api/search?q="+encodeURIComponent(v));
+    $("#railtitle").textContent = r.length ? "Matches" : "No matches";
+    $("#list").replaceChildren(...r.map(railItem));
+    if (r.length && r[0].score_bp>=9000) openEntity(r[0].id);
+  },180);
+});
+$("#q").addEventListener("keydown", e=>{ if(e.key==="Enter"){ const b=$("#list button"); if(b) b.click(); }});
+
+function orbit(ent){
+  const links = ent.facts.filter(f=>f.other);
+  const W=640, H=440, cx=W/2, cy=H/2+4, R=Math.min(170, 80+links.length*9);
+  const svg = h("svg",{svg:1, id:"orbit", viewBox:`0 0 ${W} ${H}`, role:"img", "aria-label":`${ent.name} and ${links.length} direct connections`});
+  const others = [...new Map(links.map(f=>[f.other,f])).keys()];
+  const pos = {}; others.forEach((o,i)=>{ const a = -Math.PI/2 + i*2*Math.PI/Math.max(1,others.length); pos[o]=[cx+R*Math.cos(a)*1.45, cy+R*Math.sin(a)]; });
+  const threads = h("g",{svg:1}), labels = h("g",{svg:1}), nodes = h("g",{svg:1});
+  const seen = {}, total = {};
+  links.forEach(f=>{ total[f.other]=(total[f.other]||0)+1; });
+  links.forEach((f,i)=>{
+    const [x,y]=pos[f.other]; const k=(seen[f.other]=(seen[f.other]||0)+1)-1; const bend=(k-(total[f.other]-1)/2)*70;
+    const mx=(cx+x)/2+bend*(y-cy)/R*.5, my=(cy+y)/2-bend*(x-cx)/R*.5;
+    const d=`M${cx},${cy} Q${mx},${my} ${x},${y}`;
+    const p = h("path",{svg:1, d, class:"thread "+(f.direction==="in"?"in":"out"), stroke:actorColor(f.actor)});
+    const len = Math.hypot(x-cx,y-cy)*1.15; p.style.setProperty("--len", len.toFixed(0)); p.style.setProperty("--d", (i*45)+"ms");
+    p.append(h("title",{svg:1, text:`${f.predicate} · ${f.actor} · ${f.id}`}));
+    threads.append(p);
+    labels.append(h("text",{svg:1, class:"pred", x:mx, y:my-4, "text-anchor":"middle", text:(f.direction==="in"?"← ":"")+f.predicate.replace(/_/g," ")}));
+  });
+  others.forEach(o=>{
+    const f = links.find(l=>l.other===o); const [x,y]=pos[o];
+    const g = h("g",{svg:1, class:"node", tabindex:"0", role:"link", "aria-label":`Open ${f.other_name}`,
+      onclick:()=>openEntity(o), onkeydown:e=>{ if(e.key==="Enter") openEntity(o); }});
+    g.append(h("circle",{svg:1, cx:x, cy:y, r:9, stroke:actorColor(f.actor)}));
+    const below = y>cy-10;
+    g.append(h("text",{svg:1, x, y: below? y+26 : y-30, "text-anchor":"middle", text: f.other_name.length>26? f.other_name.slice(0,25)+"…" : f.other_name}));
+    g.append(h("text",{svg:1, class:"t", x, y: below? y+41 : y-16, "text-anchor":"middle", text:f.other_type}));
+    nodes.append(g);
+  });
+  const core = h("g",{svg:1, class:"core"}, h("circle",{svg:1,cx,cy,r:30}), h("text",{svg:1,x:cx,y:cy+4,"text-anchor":"middle",text:ent.type}));
+  svg.append(threads, labels, nodes, core);
+  if (!links.length) svg.append(h("text",{svg:1,x:cx,y:cy+62,"text-anchor":"middle",class:"pred",text:"No links yet. Agents and you can add some."}));
+  requestAnimationFrame(()=>svg.classList.add("draw"));
+  return svg;
+}
+
+function factRow(f){
+  const what = f.other
+    ? h("div",{class:"what"}, h("span",{class:"p",text:(f.direction==="in"?"← ":"")+f.predicate.replace(/_/g," ")+" "}),
+        h("button",{onclick:()=>openEntity(f.other), text:f.other_name}))
+    : h("div",{class:"what"}, h("span",{class:"p",text:f.predicate.replace(/_/g," ")+" "}), h("span",{class:"val",text:f.value}));
+  const since = f.valid_from.slice(0,10) + (f.valid_to ? " – "+f.valid_to.slice(0,10) : "");
+  return h("div",{class:"fact"}, what, h("span",{class:"fid",text:f.id}),
+    h("div",{class:"meta"}, who(f.actor),
+      h("span",{title:`confidence ${f.confidence_bp/100}%`}, h("span",{class:"conf"}, h("b",{style:`width:${f.confidence_bp/100}%`}))),
+      h("span",{text:since}), f.status!=="current" ? h("span",{text:f.status}) : null,
+      f.source ? h("span",{title:f.source, text:"source: "+(f.source.length>38? f.source.slice(0,37)+"…" : f.source)}) : null));
+}
+
+async function openEntity(id){
+  let ent;
+  try { ent = await api("/api/entity?id="+encodeURIComponent(id)); } catch(e){ return toast(e.message); }
+  if (ent.candidates){ $("#railtitle").textContent="Did you mean"; $("#list").replaceChildren(...ent.candidates.map(railItem)); return; }
+  current = ent.id; history.replaceState(null,"","#"+encodeURIComponent(ent.id));
+  document.querySelectorAll(".rail li button").forEach(b=>b.setAttribute("aria-current", String(b.querySelector(".id").textContent===ent.id)));
+  const authors = [...new Set(ent.facts.filter(f=>f.other).map(f=>f.actor))];
+  $("#hero").replaceChildren(
+    h("div",{class:"kind"}, h("b",{text:ent.type}), h("span",{class:"mono",text:ent.id})),
+    h("h1",{text:ent.name}),
+    ent.summary ? h("p",{class:"summary",text:ent.summary}) : null,
+    ent.aliases.length ? h("div",{class:"aliases"}, ...ent.aliases.map(a=>h("span",{text:a}))) : null,
+    orbit(ent),
+    h("div",{class:"legend"},
+      ...authors.map(a=>h("span",null,h("i",{style:`background:${actorColor(a)}`}),a)),
+      h("span",null,h("i",{style:"background:repeating-linear-gradient(90deg,#93A0BF 0 5px,transparent 5px 10px)"}),"points here"))
+  );
+  const lit = ent.facts.filter(f=>!f.other), rel = ent.facts.filter(f=>f.other);
+  const cards = [];
+  if (ent.pending.length) cards.push(h("section",{class:"card pending"}, h("h3",{text:`Waiting for review (${ent.pending.length})`}),
+    ...ent.pending.map(p=>h("div",{class:"fact"}, h("div",{class:"what"}, who(p.actor), " ", h("span",{class:"p",text:p.reason||""})),
+      h("button",{class:"btn",onclick:()=>show("review"),text:"Review"})))));
+  cards.push(h("section",{class:"card"}, h("h3",{text:"What's true now"}),
+    ...(lit.length||rel.length ? [...lit,...rel].map(factRow) : [h("p",{class:"muted",text:"Nothing recorded yet."})])));
+  if (ent.history.length) cards.push(h("section",{class:"card past"}, h("details",null, h("summary",{text:`What used to be true (${ent.history.length})`}), ...ent.history.map(factRow))));
+  cards.push(h("section",{class:"card"}, h("details",null, h("summary",{text:"What an agent sees (lattice_context, 700-token budget)"}), h("pre",{class:"agent",text:ent.context}))));
+  $("#facts").replaceChildren(...cards);
+}
+
+/* ---------- review ---------- */
+function opSentence(op){
+  switch(op.op){
+    case "create_entity": return `Create ${op.type} “${op.name}”` + (op.summary? ` — ${op.summary}` : "");
+    case "assert": return `${op.subject} ${String(op.predicate).replace(/_/g," ")} ${op.object ?? "“"+op.value+"”"}` +
+      (op.valid_from? ` (from ${op.valid_from})`:"") + (op.source? ` · source: ${op.source}`:"") + (op.confidence!=null? ` · ${op.confidence}%`:"");
+    case "retract": return `Retract ${op.fact}: ${op.reason}`;
+    case "add_alias": return `Add alias “${op.alias}” to ${op.entity}`;
+    case "update_summary": return `New summary for ${op.entity}: ${op.summary}`;
+    default: return `${op.op} ${op.name||""}`;
+  }
+}
+async function loadQueue(){
+  const items = await api("/api/proposals?status=pending");
+  $("#qcount").textContent = items.length || "";
+  if (!items.length){ $("#queue").replaceChildren(h("div",{class:"empty"},"Nothing waiting on you.",h("p",{text:"When an agent's write needs a human, it shows up here with the rule that flagged it."}))); return; }
+  $("#queue").replaceChildren(...items.map(p=>h("article",{class:"prop"},
+    h("div",null, h("div",{class:"kind"}, who(p.actor), h("span",{class:"mono",text:p.proposal_id}), h("span",{text:p.received_at.replace("T"," ").slice(0,16)})),
+      h("h2",{text: p.proposal.ops.length===1 ? opSentence(p.proposal.ops[0]) : `${p.proposal.ops.length} changes`}),
+      p.proposal.justification ? h("p",{class:"why",text:"“"+p.proposal.justification+"”"}) : null),
+    h("div",{class:"acts"}, h("button",{class:"btn no",onclick:()=>decide(p.proposal_id,"reject"),text:"Reject"}),
+      h("button",{class:"btn yes",onclick:()=>decide(p.proposal_id,"approve"),text:"Approve"})),
+    h("div",{class:"rule"}, h("code",{text:p.rule_id||""}), h("span",{text:p.reason||""})),
+    p.proposal.ops.length>1 ? h("ol",null,...p.proposal.ops.map(o=>h("li",{text:opSentence(o)}))) : null
+  )));
+}
+function askPass(title, label){
+  return new Promise(res=>{
+    if (passphrase) return res(passphrase);
+    const d=$("#pp"); $("#pptitle").textContent=title; $("#ppok").textContent=label; $("#ppin").value="";
+    d.onclose=()=>res(d.returnValue==="ok" ? (passphrase=$("#ppin").value) : ""); d.showModal();
+  });
+}
+async function decide(id, action){
+  const pw = await askPass(action==="approve"?"Approve proposal":"Reject proposal", action==="approve"?"Approve":"Reject");
+  if (!pw) return;
+  try{
+    const r = await api(`/api/proposals/${id}/${action}`,{method:"POST",body:JSON.stringify({passphrase:pw, reason:"rejected in UI"})});
+    toast(r.status==="applied" ? `Approved and applied ${id}` : r.status==="rejected" ? `Rejected ${id}` : `${id}: ${r.status}${r.errors? " — "+r.errors[0].error : ""}`);
+  }catch(e){ if (/passphrase/.test(e.message)) passphrase=""; toast(e.message); }
+  loadQueue(); refreshSeal(); if (current) openEntity(current);
+}
+
+/* ---------- ledger ---------- */
+async function loadLedger(){
+  const evs = await api("/api/ledger?limit=60");
+  $("#chain").replaceChildren(...evs.map(e=>h("div",{class:"block"}, h("span",{class:"seq",text:"#"+e.seq}),
+    h("div",null, h("span",{class:"ty",text:e.type.replace("."," ")}), " ", who(e.actor), h("div",{class:"muted",style:"font-size:12px",text:e.ts.replace("T"," ").replace("Z"," UTC")})),
+    h("span",{class:"h",title:e.hash,text:e.hash.slice(7,19)+"\n← "+(e.prev? e.prev.slice(7,19) : "genesis")}))));
+}
+$("#verify").onclick = async ()=>{
+  $("#verifyout").textContent="Checking…";
+  const r = await api("/api/verify");
+  $("#verifyout").textContent = r.rebuild_matches ? `Intact: ${r.events} events, and rebuilding the graph from the ledger matches.` : "Mismatch: the graph differs from its ledger.";
+  $("#seal").classList.toggle("bad", !r.rebuild_matches);
+};
+$("#seal").onclick = ()=>{ show("ledger"); $("#verify").click(); };
+
+async function refreshSeal(){
+  const s = await api("/api/stats");
+  $("#sealtext").textContent = `#${s.ledger_seq} ${s.ledger_head.slice(7,15)}`;
+  $("#qcount").textContent = s.pending || "";
+}
+
+(async ()=>{
+  await refreshSeal(); await loadRecent();
+  const start = decodeURIComponent(location.hash.slice(1));
+  const first = start || ($("#list .id") && $("#list .id").textContent);
+  if (first) openEntity(first); else $("#hero").replaceChildren(h("div",{class:"empty"},"An empty lattice.",h("p",{text:"Run lattice init --demo, or connect an agent over MCP and let it propose the first facts."})));
+})();
+</script>
+</body>
+</html>

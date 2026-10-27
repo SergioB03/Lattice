@@ -28,6 +28,15 @@ _INSTRUCTION_PATTERNS = [
 _INSTRUCTION_RE = re.compile("|".join(_INSTRUCTION_PATTERNS), re.IGNORECASE)
 
 
+# Latin look-alikes from Cyrillic and Greek (subset of Unicode TR39 confusables). Used only for
+# comparison keys, so "Skуlr" (Cyrillic у) collides with "Skylr" instead of slipping past dedup.
+_CONFUSABLES = str.maketrans({
+    "а": "a", "в": "b", "е": "e", "ё": "e", "к": "k", "м": "m", "н": "h", "о": "o", "р": "p", "с": "c", "т": "t",
+    "у": "y", "х": "x", "ѕ": "s", "і": "i", "ј": "j", "ԁ": "d", "ɡ": "g", "ӏ": "l", "ο": "o", "α": "a", "ε": "e",
+    "ι": "i", "κ": "k", "ν": "v", "ρ": "p", "τ": "t", "υ": "u", "χ": "x", "ω": "w", "ℓ": "l", "ı": "i",
+})
+
+
 def clean(text: str) -> str:
     """NFC-normalise, strip invisible/control characters, collapse whitespace runs."""
     text = unicodedata.normalize("NFC", text)
@@ -41,7 +50,7 @@ def norm_key(text: str) -> str:
     """Comparison key for names and aliases: case-folded, accent-free, punctuation-light."""
     text = unicodedata.normalize("NFKD", clean(text))
     text = "".join(ch for ch in text if not unicodedata.combining(ch))
-    text = text.casefold()
+    text = text.casefold().translate(_CONFUSABLES)
     text = re.sub(r"[^\w]+", " ", text)
     return text.strip()
 

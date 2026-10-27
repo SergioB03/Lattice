@@ -52,6 +52,14 @@ def seed(lat: Lattice, owner: str = "human:owner") -> None:
         {"op": "assert", "subject": "agent:claude-code", "predicate": "role", "value": "Lattice builder", "source": "observed"},
     ], "Record who made the storage call.", now="2026-10-27T12:05:00.000Z")
     lat.propose("agent:codex-rem", [
+        {"op": "assert", "subject": "project:skylr", "predicate": "depends_on", "object": "tool:sqlite",
+         "source": "Skylr go.mod (modernc.org/sqlite)", "confidence": 95},
+    ], "Skylr's ledger is SQLite too.", now="2026-10-27T12:05:30.000Z")
+    lat.propose("agent:ollama-qwen", [
+        {"op": "assert", "subject": "project:lattice", "predicate": "uses", "object": "concept:agent-governance",
+         "source": "docs/architecture.md", "confidence": 85},
+    ], "Lattice is governed by a policy engine.", now="2026-10-27T12:05:40.000Z")
+    lat.propose("agent:codex-rem", [
         {"op": "assert", "subject": "project:skylr", "predicate": "note", "source": "conversation", "confidence": 90,
          "value": "M1 offline foundations done: canonical hashing, CAS, SQLite ledger, typed policy, replay."},
     ], "Status from the Skylr thread.", now="2026-10-27T12:06:00.000Z")
