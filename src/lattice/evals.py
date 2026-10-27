@@ -60,9 +60,12 @@ def _outcome(res: dict[str, Any]) -> str:
 
 def run_case(engine: Engine, case: dict[str, Any], actor: str | None = None, mutate=None) -> dict[str, Any]:
     lat = _fresh(engine)
+    prelude_ids: list[str] = []
     for i, pre in enumerate(case.get("prelude", [])):
-        lat.propose(pre["actor"], pre["ops"], pre.get("justification", ""), now=f"2026-10-28T08:{i % 60:02d}:00.000Z")
-    ops = _bind_facts(lat, copy.deepcopy(case["ops"]))
+        pre_ops = _bind_prelude(prelude_ids, copy.deepcopy(pre["ops"]))
+        r = lat.propose(pre["actor"], pre_ops, pre.get("justification", ""), now=f"2026-10-28T08:{i % 60:02d}:00.000Z")
+        prelude_ids.append(r["proposal_id"])
+    ops = _bind_prelude(prelude_ids, _bind_facts(lat, copy.deepcopy(case["ops"])))
     if mutate:
         ops = mutate(ops)
     import time
@@ -73,9 +76,24 @@ def run_case(engine: Engine, case: dict[str, Any], actor: str | None = None, mut
     except Exception as exc:  # noqa: BLE001
         res, ok = {"status": "error", "outcome": "error", "rule_id": "harness.error", "reason": str(exc)}, False
     ms = (time.perf_counter() - t0) * 1000
-    out = {"outcome": _outcome(res) if ok else "error", "rule_id": res.get("rule_id", ""), "ms": ms,
+    outcome = _outcome(res) if ok else "error"
+    if ok and case.get("then_status"):
+        idx, want = case["then_status"]
+        got = lat.proposal_status(prelude_ids[idx])["status"]
+        if got != want:  # the case's follow-on effect didn't happen: report it as its own outcome
+            outcome = f"{outcome}/then:{got}"
+    out = {"outcome": outcome, "rule_id": res.get("rule_id", ""), "ms": ms,
            "decision_digest": res.get("decision_digest", ""), "lat": lat}
     return out
+
+
+def _bind_prelude(ids: list[str], ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Replace "$prelude:N" with the id of the N-th prelude proposal (for endorsement cases)."""
+    for op in ops:
+        for k, v in list(op.items()):
+            if isinstance(v, str) and v.startswith("$prelude:"):
+                op[k] = ids[int(v.split(":")[1])]
+    return ops
 
 
 def _bind_facts(lat: Lattice, ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -140,7 +158,7 @@ def evaluate(engines: dict[str, Engine], suites: list[dict[str, Any]]) -> dict[s
                     consist_fail.append(c["id"])
             # parity: metamorphic variants for agent cases that don't reference the actor's own entity
             if c["actor"].startswith("agent:") and not c.get("self_scoped") and c["actor"] not in json.dumps(c["ops"]):
-                variants = [("vendor:" + v, v, None) for v in VENDORS if v != c["actor"]]
+                variants = [] if c.get("vendor_sensitive") else [("vendor:" + v, v, None) for v in VENDORS if v != c["actor"]]
                 variants.append(("unicode:NFD", c["actor"], _nfd))
                 for label, actor, mut in variants:
                     parity_checks += 1
@@ -149,11 +167,11 @@ def evaluate(engines: dict[str, Engine], suites: list[dict[str, Any]]) -> dict[s
                         parity_fail.append(f"{c['id']}[{label}]: {r['outcome']}→{v['outcome']}")
         got = [r["got"] for r in rows]
         exp = [r["expect"] for r in rows]
-        matrix = {e: {g: 0 for g in OUTCOMES + ("error",)} for e in OUTCOMES}
+        matrix = {e: {g: 0 for g in OUTCOMES + ("error", "other")} for e in OUTCOMES}
         for e, g in zip(exp, got):
-            matrix[e][g] += 1
+            matrix[e][g if g in matrix[e] else "other"] += 1
         errors = [r for r in rows if r["got"] != r["expect"]]
-        false_allows = [r for r in errors if r["got"] == "allow"]
+        false_allows = [r for r in errors if r["got"] == "allow" or "then:applied" in r["got"]]
         n = len(rows)
         outcomes_by_engine[name] = got
         report["engines"][name] = {

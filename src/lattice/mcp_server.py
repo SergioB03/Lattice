@@ -113,6 +113,23 @@ def build_server(lat: Lattice, actor: str):
                          for p in items) or f"No {status} proposals."
 
     @server.tool(annotations=ro)
+    def lattice_review_queue(limit: int = 15) -> str:
+        """Other actors' proposals waiting for review. If you can verify one, endorse it with lattice_propose
+        op {"op":"endorse","proposal":id,"verdict":"approve"|"object","reason":...}. Agreement from agents of
+        different vendors can settle some findings without a human; one objection sends it to the human."""
+        items = [p for p in lat.list_proposals("pending", limit=50) if p["actor"] != actor][:limit]
+        if not items:
+            return "Nothing waiting."
+        out = []
+        for p in items:
+            ops = "; ".join(json.dumps(o, ensure_ascii=False)[:160] for o in p["proposal"]["ops"][:3])
+            votes = ", ".join(f"{e['actor']}={e['verdict']}" for e in p["endorsements"]) or "none"
+            out.append(f"- {p['proposal_id']} by {p['actor']} ({p.get('rule_id', '')}): {quote(p.get('reason', ''))}\n"
+                       f"  ops: {quote(ops)}\n  endorsements: {votes}"
+                       + (f"\n  consensus: {p['consensus']}" if p["consensus"] else ""))
+        return "\n".join(out)
+
+    @server.tool(annotations=ro)
     def lattice_proposal_status(proposal_id: str) -> str:
         """Check one proposal you made earlier (pending → applied/rejected). Don't poll in a loop."""
         try:
@@ -126,7 +143,8 @@ def build_server(lat: Lattice, actor: str):
         Each op is an object with "op" plus fields:
           create_entity(type, name, summary?, aliases?, ref?) · assert(subject, predicate, object|value, source, confidence 0-100?,
           valid_from?, evidence?) · retract(fact, reason) · add_alias(entity, alias) · update_summary(entity, summary) ·
-          define_type(name, description) · define_predicate(name, domain, range, cardinality, description)
+          define_type(name, description) · define_predicate(name, domain, range, cardinality, description) ·
+          endorse(proposal, verdict approve|object, reason?)  (vote on someone else's pending proposal)
         Example: [{"op":"create_entity","type":"tool","name":"Python","ref":"$py"},
                   {"op":"assert","subject":"project:lattice","predicate":"uses","object":"$py","source":"pyproject.toml","confidence":95}]
         Use 'object' for predicates that point at entities and 'value' for literal predicates (lattice_schema says which).

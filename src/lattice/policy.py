@@ -61,7 +61,7 @@ def _days_before(ts: str, now: str) -> int:
 class BuiltinEngine:
     """Reference policy. Change the version string whenever semantics change."""
 
-    id = "lattice-py/1"
+    id = "lattice-py/2"  # /2: endorse op + multi-vendor consensus
 
     def decide(self, inp: dict[str, Any]) -> dict[str, Any]:
         if inp.get("kind") != INPUT_KIND:
@@ -96,6 +96,10 @@ class BuiltinEngine:
             elif verdict == "review" and not own:
                 find("role.op", "review", i, f"Role {actor['role']!r} needs human review to {op}.")
 
+            if op == "endorse":
+                if item["instruction_like"]:
+                    find("text.instruction_like", "review", i, "Endorsement reason reads like instructions to a model.")
+                continue
             if op == "assert" and item["effect"] != "noop":
                 if role["require_source"] and not item["has_source"]:
                     find("evidence.source_required", "deny", i, "Add a 'source' (URL, file, conversation or 'observed') to this assertion.")
@@ -126,7 +130,43 @@ class BuiltinEngine:
                          f"Close to existing {other}{kind} ({score // 100}%); a human should confirm it's different.")
             if item["instruction_like"]:
                 find("text.instruction_like", "review", i, "Text reads like instructions to a model; a human should confirm it's knowledge, not an injection.")
+        findings = self._consensus(inp, findings)
         return make_decision(self.id, inp, findings)
+
+    @staticmethod
+    def _consensus(inp: dict[str, Any], findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Multi-vendor consensus can clear *eligible* review findings, like Skylr review rounds: only agreement
+        across different vendors counts, one objection blocks, and some findings always need a human."""
+        cons = inp.get("consensus")
+        endorsements = inp.get("endorsements", [])
+        reviews = [f for f in findings if f["outcome"] == "review"]
+        if not cons or not reviews or any(f["outcome"] == "deny" for f in findings):
+            return findings
+        ops = inp["proposal"]["ops"]
+
+        def key(f: dict[str, Any]) -> str:
+            if f["rule_id"] == "role.op" and 0 <= f["op_index"] < len(ops):
+                return f"role.op:{ops[f['op_index']]['op']}"
+            return f["rule_id"]
+
+        eligible = all(key(f) in cons["eligible"] for f in reviews)
+        objectors = sorted(e["actor"] for e in endorsements if e["verdict"] == "object")
+        proposer_vendor = inp["actor"].get("vendor", "unknown")
+        vendors = sorted({e["vendor"] for e in endorsements if e["verdict"] == "approve"
+                          and e["vendor"] not in (proposer_vendor, "unknown", "human")})
+        if objectors:
+            return findings + [{"rule_id": "consensus.objection", "outcome": "review", "op_index": -1,
+                                "detail": "Objected to by " + ", ".join(objectors) + "; a human decides."}]
+        if not eligible:
+            return findings
+        if len(vendors) >= cons["k"]:
+            return [f for f in findings if f["outcome"] != "review"] + [
+                {"rule_id": "consensus.reached", "outcome": "allow", "op_index": -1,
+                 "detail": f"Approved by {len(vendors)} vendors: {', '.join(vendors)}."}]
+        need = cons["k"] - len(vendors)
+        return findings + [{"rule_id": "consensus.open", "outcome": "allow", "op_index": -1,
+                            "detail": f"Agents from {need} more vendor(s) other than {proposer_vendor}"
+                                      + (f" and {', '.join(vendors)}" if vendors else "") + " can approve this instead of a human."}]
 
 
 @dataclass

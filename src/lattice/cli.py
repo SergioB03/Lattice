@@ -153,6 +153,11 @@ def cmd_review(ns) -> None:
             print(f"    {p.get('rule_id', '')}: {p.get('reason', '')}")
             if p["proposal"]["justification"]:
                 print(f"    why: «{p['proposal']['justification']}»")
+            for e in p["endorsements"]:
+                mark = f"{GREEN}+{RESET}" if e["verdict"] == "approve" else f"{RED}✗{RESET}"
+                print(f"    {mark} {e['actor']} ({e['vendor']})" + (f": «{e['reason']}»" if e["reason"] else ""))
+            if p["consensus"]:
+                print(f"    {DIM}{p['consensus']}{RESET}")
             for op in p["proposal"]["ops"]:
                 print(f"    {DIM}{json.dumps(op, ensure_ascii=False)}{RESET}")
         return

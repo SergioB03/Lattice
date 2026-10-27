@@ -70,3 +70,8 @@ def seed(lat: Lattice, owner: str = "human:owner", passphrase: str | None = None
     lat.propose("agent:ollama-qwen", [
         {"op": "create_entity", "type": "project", "name": "Skyler", "summary": "Governance app"},
     ], "New project?", now="2026-10-27T12:08:00.000Z")
+    skyler = [r[0] for r in lat.conn.execute("SELECT id FROM proposals WHERE status='pending' AND body LIKE '%Skyler%'")]
+    if skyler:
+        lat.propose("agent:claude-code", [{"op": "endorse", "proposal": skyler[0], "verdict": "object",
+                                           "reason": "Looks like a misspelling of Skylr, not a new project."}],
+                    "Cross-check from another vendor.", now="2026-10-27T12:09:00.000Z")

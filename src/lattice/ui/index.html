@@ -109,6 +109,9 @@ pre.agent{white-space:pre-wrap;background:var(--ink);border:1px solid var(--line
 .prop .rule code{font-family:var(--mono);font-size:12px;color:var(--ember);background:rgba(242,166,90,.1);padding:2px 7px;border-radius:6px}
 .prop ol{grid-column:1/-1;margin:0;padding-left:20px;display:grid;gap:4px}
 .prop .acts{display:flex;gap:8px;align-self:start}
+.votes{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:13px}
+.vote{display:inline-flex;align-items:center;gap:4px;padding-right:8px;border-radius:999px;border:1px solid var(--line)}
+.vote.approve{border-color:rgba(111,211,184,.5)}.vote.object{border-color:rgba(255,111,125,.6)}
 .btn{border:1px solid var(--line);background:var(--raise);border-radius:9px;padding:8px 14px;cursor:pointer}
 .btn.yes{background:var(--glass);border-color:var(--glass);color:#0b2b24;font-weight:600}
 .btn.no:hover{border-color:var(--coral);color:var(--coral)}
@@ -328,6 +331,7 @@ function opSentence(op){
     case "retract": return `Retract ${op.fact}: ${op.reason}`;
     case "add_alias": return `Add alias “${op.alias}” to ${op.entity}`;
     case "update_summary": return `New summary for ${op.entity}: ${op.summary}`;
+    case "endorse": return `${op.verdict === "approve" ? "Approve" : "Object to"} ${op.proposal}` + (op.reason? `: ${op.reason}` : "");
     default: return `${op.op} ${op.name||""}`;
   }
 }
@@ -353,7 +357,10 @@ async function loadQueue(){
     h("div",{class:"acts"}, h("button",{class:"btn no",onclick:()=>decide(p.proposal_id,"reject"),text:"Reject"}),
       h("button",{class:"btn yes",onclick:()=>decide(p.proposal_id,"approve"),text:"Approve"})),
     ...(p.findings.length? p.findings : [{rule_id:p.rule_id||"", detail:p.reason||""}]).map(f=>h("div",{class:"rule"}, h("code",{text:f.rule_id}), h("span",{text:f.detail}))),
-    h("ol",null,...p.proposal.ops.map((o,i)=>opItem(p,o,i)))
+    h("ol",null,...p.proposal.ops.map((o,i)=>opItem(p,o,i))),
+    (p.endorsements.length || p.consensus) ? h("div",{class:"votes"},
+      ...p.endorsements.map(e=>h("span",{class:"vote "+e.verdict, title:e.reason||""}, who(e.actor), e.verdict==="approve"?" approves":" objects")),
+      p.consensus ? h("span",{class:"muted",text:p.consensus}) : null) : null
   )));
 }
 function askPass(title, label){

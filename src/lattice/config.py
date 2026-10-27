@@ -16,7 +16,7 @@ from typing import Any
 from .canonical import digest
 
 ACTOR_RE = re.compile(r"^(human|agent|service):[a-z0-9][a-z0-9._-]{0,63}$")
-OPS = ("create_entity", "assert", "retract", "add_alias", "update_summary", "define_type", "define_predicate")
+OPS = ("create_entity", "assert", "retract", "add_alias", "update_summary", "define_type", "define_predicate", "endorse")
 OUTCOMES = ("allow", "review", "deny")
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -48,6 +48,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "update_summary": "allow",
                 "define_type": "review",
                 "define_predicate": "review",
+                "endorse": "allow",
             },
             "max_ops_per_proposal": 25,
             "max_proposals_per_hour": 120,
@@ -71,7 +72,36 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"match": "service:*", "role": "observer"},
     ],
     "resolution": {"duplicate_threshold_bp": 9500, "review_threshold_bp": 8500},
+    # Which company/runtime an agent belongs to. Consensus counts *vendors*, not agents,
+    # so three Claude instances agreeing is one voice. First match wins.
+    "vendors": [
+        {"match": "human:*", "vendor": "human"},
+        {"match": "agent:claude*", "vendor": "anthropic"},
+        {"match": "agent:codex*", "vendor": "openai"},
+        {"match": "agent:gpt*", "vendor": "openai"},
+        {"match": "agent:antigravity*", "vendor": "google"},
+        {"match": "agent:gemini*", "vendor": "google"},
+        {"match": "agent:jules*", "vendor": "google"},
+        {"match": "agent:replit*", "vendor": "replit"},
+        {"match": "agent:copilot*", "vendor": "github"},
+        {"match": "agent:ollama*", "vendor": "local"},
+        {"match": "agent:local*", "vendor": "local"},
+    ],
+    # Multi-vendor consensus can stand in for a human on these review findings only. Overruling a
+    # higher-trust author, suspected injection and history rewrites always need a human.
+    "consensus": {
+        "k": 2,
+        "eligible": [
+            "evidence.low_confidence",
+            "trust.claim_slot",
+            "entity.near_duplicate",
+            "temporal.backdated",
+            "role.op:retract",
+            "role.op:add_alias",
+        ],
+    },
 }
+NEVER_CONSENSUS = ("trust.override", "text.instruction_like", "temporal.overlap", "role.op:define_type", "role.op:define_predicate")
 
 
 class ConfigError(ValueError):
@@ -83,9 +113,10 @@ class Actor:
     id: str
     role: str
     trust: int
+    vendor: str = "unknown"
 
     def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "role": self.role, "trust": self.trust}
+        return {"id": self.id, "role": self.role, "trust": self.trust, "vendor": self.vendor}
 
 
 def validate_actor_id(actor: str) -> str:
@@ -120,6 +151,14 @@ class Config:
         for rule in d.get("actors", []):
             if rule.get("role") not in roles:
                 raise ConfigError(f"actor rule {rule} names an unknown role")
+        for rule in d.get("vendors", []):
+            if set(rule) != {"match", "vendor"} or not str(rule["vendor"]).isidentifier():
+                raise ConfigError(f"vendor rule {rule} needs match and a simple vendor name")
+        cons = d.get("consensus", {"k": 2, "eligible": []})
+        if set(cons) != {"k", "eligible"} or not (isinstance(cons["k"], int) and cons["k"] >= 2):
+            raise ConfigError("consensus needs k (>= 2) and eligible")
+        if bad := [e for e in cons["eligible"] if e in NEVER_CONSENSUS]:
+            raise ConfigError(f"these findings always need a human and can't be consensus-eligible: {bad}")
         res = d.get("resolution", {})
         if not (0 < res.get("review_threshold_bp", 0) <= res.get("duplicate_threshold_bp", 0) <= 10000):
             raise ConfigError("resolution thresholds must satisfy 0 < review <= duplicate <= 10000")
@@ -129,8 +168,14 @@ class Config:
         for rule in self.data["actors"]:
             if fnmatch.fnmatchcase(actor_id, rule["match"]):
                 role = rule["role"]
-                return Actor(actor_id, role, self.data["roles"][role]["trust"])
-        return Actor(actor_id, "observer", self.data["roles"].get("observer", {"trust": 0})["trust"])
+                return Actor(actor_id, role, self.data["roles"][role]["trust"], self.vendor(actor_id))
+        return Actor(actor_id, "observer", self.data["roles"].get("observer", {"trust": 0})["trust"], self.vendor(actor_id))
+
+    def vendor(self, actor_id: str) -> str:
+        for rule in self.data.get("vendors", []):
+            if fnmatch.fnmatchcase(actor_id, rule["match"]):
+                return rule["vendor"]
+        return "unknown"
 
     def role(self, name: str) -> dict[str, Any]:
         return self.data["roles"][name]

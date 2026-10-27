@@ -24,6 +24,9 @@ CREATE TABLE IF NOT EXISTS entities(
   summary TEXT NOT NULL, created_seq INTEGER NOT NULL, created_by TEXT NOT NULL, created_trust INTEGER NOT NULL,
   summary_by TEXT NOT NULL, summary_trust INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS entities_name_key ON entities(name_key);
+CREATE TABLE IF NOT EXISTS endorsements(
+  proposal_id TEXT NOT NULL, actor TEXT NOT NULL, vendor TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT NOT NULL,
+  seq INTEGER NOT NULL, PRIMARY KEY(proposal_id, actor));
 CREATE TABLE IF NOT EXISTS skeletons(skel TEXT NOT NULL, entity_id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY(skel, entity_id, label));
 CREATE TABLE IF NOT EXISTS aliases(
   entity_id TEXT NOT NULL REFERENCES entities(id), alias TEXT NOT NULL, alias_key TEXT NOT NULL,
@@ -49,7 +52,7 @@ CREATE TABLE IF NOT EXISTS decisions(
 CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5(entity_id UNINDEXED, text, tokenize='trigram');
 """
 
-GRAPH_TABLES = ("entities", "aliases", "facts", "proposals", "decisions", "skeletons")
+GRAPH_TABLES = ("entities", "aliases", "facts", "proposals", "decisions", "skeletons", "endorsements")
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -130,6 +133,9 @@ def apply_effects(conn: sqlite3.Connection, effects: Iterable[dict[str, Any]], *
         elif kind == "fact_trimmed":
             conn.execute("UPDATE facts SET valid_to=? WHERE id=? AND status IN ('superseded','historical')",
                          (e["valid_to"], e["id"]))
+        elif kind == "endorsement_added":
+            conn.execute("INSERT INTO endorsements VALUES(?,?,?,?,?,?)",
+                         (e["proposal"], e["actor"], e["vendor"], e["verdict"], e["reason"], seq))
         elif kind == "type_defined":
             schema = json.loads(get_meta(conn, "schema"))
             schema["entity_types"][e["name"]] = e["description"]
