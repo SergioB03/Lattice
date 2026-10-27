@@ -75,7 +75,7 @@ def test_agents_must_cite_sources_and_idempotent_noops(lat):
     op = {"op": "assert", "subject": "Lattice", "predicate": "uses", "object": "SQLite"}
     r = lat.propose("agent:claude-code", [op])
     assert r["status"] == "applied" and r["rule_id"] == "noop.already_known"  # already true: no source needed
-    new = {"op": "assert", "subject": "Lattice", "predicate": "uses", "object": "Agent governance"}
+    new = {"op": "assert", "subject": "Skylr", "predicate": "uses", "object": "MCP"}
     assert lat.propose("agent:claude-code", [new])["rule_id"] == "evidence.source_required"
     assert lat.propose("agent:claude-code", [new | {"source": "README"}])["status"] == "applied"
 
