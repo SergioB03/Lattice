@@ -60,3 +60,12 @@ is fixed and pinned by a test in `tests/test_round2.py` or a scenario in the eva
   policy (owners and maintainers don't need sources), not a schema rule, and the deny reason says exactly what to add.
 - *Set MCP `isError` for denied/invalid proposals.* We set it for bad input (unknown ids, malformed
   dates, key conflicts). A denied proposal is a successful call with a governance answer, so it isn't an error.
+
+### Round 2b: scale check (same day)
+
+A synthetic load of 4,000 entities and 2,000 facts surfaced two problems:
+- **Serial names were flagged as duplicates.** "alpha bravo 0-1" vs "-2", like "Sprint 12" vs "Sprint 13".
+  Names whose numbers differ are now capped below the review band.
+- **Entity resolution was a quadratic fuzzy scan.** Resolution now uses blocking: exact keys, a
+  look-alike skeleton index, and FTS trigram candidates. A single agent create went from 111 ms
+  to about 3 ms at that size. Context reads stay at about 1 ms, search about 2 ms, and verify-plus-rebuild about 2 s.

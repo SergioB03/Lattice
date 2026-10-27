@@ -20,7 +20,16 @@ from .canonical import CanonicalError, digest, format_ts, now_ts, parse_ts
 from .config import OPS, Config, validate_actor_id
 from .policy import INPUT_KIND, BuiltinEngine, Engine
 from .schema import Schema, SchemaError
-from .text import clean, estimate_tokens, looks_like_instruction, norm_key, quote, similarity_bp, slugify
+from .text import (
+    clean,
+    estimate_tokens,
+    looks_like_instruction,
+    norm_key,
+    quote,
+    similarity_bp,
+    skeleton,
+    slugify,
+)
 
 PROPOSAL_KIND = "lattice.dev/proposal/v1"
 OP_FIELDS: dict[str, tuple[set[str], set[str]]] = {  # op -> (required, optional)
@@ -422,16 +431,32 @@ class Lattice:
             (key, key)).fetchall()
         return [{"id": r[0], "type": r[1], "name": r[2]} for r in rows]
 
+    def _candidates(self, name: str) -> list[tuple[str, str, str]]:
+        """Blocking for entity resolution: exact keys, look-alike skeletons, and names sharing trigrams.
+        Keeps resolution near O(log n) per create instead of a full fuzzy scan."""
+        n = self.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
+        if n <= 300:
+            return self.conn.execute("SELECT e.id, e.name, e.type FROM entities e UNION ALL "
+                                     "SELECT a.entity_id, a.alias, e.type FROM aliases a JOIN entities e ON e.id=a.entity_id").fetchall()
+        key = norm_key(name)
+        out = self.conn.execute("SELECT s.entity_id, s.label, e.type FROM skeletons s JOIN entities e ON e.id=s.entity_id "
+                                "WHERE s.skel=?", (skeleton(name),)).fetchall()
+        out += [(m["id"], m["name"], m["type"]) for m in self._name_matches(name)]
+        grams = sorted({w[j:j + 3] for w in key.split() for j in range(max(1, len(w) - 2)) if len(w[j:j + 3]) == 3})[:40]
+        if grams:
+            q = " OR ".join('"' + g.replace('"', '""') + '"' for g in grams)
+            ids = [r[0] for r in self.conn.execute(
+                "SELECT entity_id FROM entity_fts WHERE entity_fts MATCH ? ORDER BY rank, entity_id LIMIT 120", (q,))]
+            for eid in ids:
+                row = self.conn.execute("SELECT id, name, type FROM entities WHERE id=?", (eid,)).fetchone()
+                out.append(tuple(row))
+                out += [(eid, a[0], row[2]) for a in self.conn.execute("SELECT alias FROM aliases WHERE entity_id=?", (eid,))]
+        return sorted(set(out))
+
     def _best_match(self, name: str, planned: list[tuple[str, str, str]]) -> dict[str, Any]:
         """Closest existing (or earlier-in-this-proposal) entity name or alias, in basis points."""
         key = norm_key(name)
-        n = self.conn.execute("SELECT COUNT(*) FROM entities").fetchone()[0]
-        if n <= 5000:
-            cand = self.conn.execute("SELECT e.id, e.name, e.type FROM entities e UNION ALL "
-                                     "SELECT a.entity_id, a.alias, e.type FROM aliases a JOIN entities e ON e.id=a.entity_id").fetchall()
-        else:
-            cand = [(h["id"], h["name"], h["type"]) for h in self.search(name, limit=50)]
-        cand = list(cand) + planned
+        cand = list(self._candidates(name)) + planned
         best = {"id": "", "name": "", "score_bp": 0, "type": ""}
         for eid, label, typ in cand:
             s = 10000 if norm_key(label) == key else similarity_bp(name, label)

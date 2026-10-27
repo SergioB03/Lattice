@@ -88,6 +88,10 @@ def similarity_bp(a: str, b: str) -> int:
         return 10000
     if skeleton(a) == skeleton(b):
         return 9900  # look-alike spelling: duplicate band, but distinguishable from an exact match
+    if re.findall(r"\d+", ka) != re.findall(r"\d+", kb):
+        # "Sprint 12" vs "Sprint 13", "Room 101" vs "Room 102": different numbers mean different things.
+        ka_, kb_ = re.sub(r"\d+", "#", ka), re.sub(r"\d+", "#", kb)
+        return min(8000, round(difflib.SequenceMatcher(None, ka_, kb_, autojunk=False).ratio() * 10000))  # look-alike spelling: duplicate band, but distinguishable from an exact match
     ratio = difflib.SequenceMatcher(None, ka, kb, autojunk=False).ratio()
     # Token-set view catches reordered names ("Banuelos Sergio").
     ta, tb = set(ka.split()), set(kb.split())

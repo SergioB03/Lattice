@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from . import ledger
-from .text import norm_key
+from .text import norm_key, skeleton
 
 DDL = """
 PRAGMA foreign_keys=ON;
@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS entities(
   summary TEXT NOT NULL, created_seq INTEGER NOT NULL, created_by TEXT NOT NULL, created_trust INTEGER NOT NULL,
   summary_by TEXT NOT NULL, summary_trust INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS entities_name_key ON entities(name_key);
+CREATE TABLE IF NOT EXISTS skeletons(skel TEXT NOT NULL, entity_id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY(skel, entity_id, label));
 CREATE TABLE IF NOT EXISTS aliases(
   entity_id TEXT NOT NULL REFERENCES entities(id), alias TEXT NOT NULL, alias_key TEXT NOT NULL,
   added_seq INTEGER NOT NULL, added_by TEXT NOT NULL, PRIMARY KEY(entity_id, alias_key));
@@ -48,7 +49,7 @@ CREATE TABLE IF NOT EXISTS decisions(
 CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5(entity_id UNINDEXED, text, tokenize='trigram');
 """
 
-GRAPH_TABLES = ("entities", "aliases", "facts", "proposals", "decisions")
+GRAPH_TABLES = ("entities", "aliases", "facts", "proposals", "decisions", "skeletons")
 
 
 def connect(path: str | Path) -> sqlite3.Connection:
@@ -96,11 +97,14 @@ def apply_effects(conn: sqlite3.Connection, effects: Iterable[dict[str, Any]], *
                 conn.execute(
                     "INSERT OR IGNORE INTO aliases VALUES(?,?,?,?,?)", (e["id"], alias, norm_key(alias), seq, actor)
                 )
+            for label in [e["name"], *e["aliases"]]:
+                conn.execute("INSERT OR IGNORE INTO skeletons VALUES(?,?,?)", (skeleton(label), e["id"], label))
             _reindex(conn, e["id"])
         elif kind == "alias_added":
             conn.execute(
                 "INSERT OR IGNORE INTO aliases VALUES(?,?,?,?,?)", (e["entity"], e["alias"], norm_key(e["alias"]), seq, actor)
             )
+            conn.execute("INSERT OR IGNORE INTO skeletons VALUES(?,?,?)", (skeleton(e["alias"]), e["entity"], e["alias"]))
             _reindex(conn, e["entity"])
         elif kind == "summary_updated":
             conn.execute("UPDATE entities SET summary=?, summary_by=?, summary_trust=? WHERE id=?",
