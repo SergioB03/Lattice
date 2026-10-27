@@ -41,6 +41,7 @@ type PlanItem struct {
 	ConfidenceBP    int    `json:"confidence_bp"`
 	Cardinality     string `json:"cardinality"`
 	ValidFrom       string `json:"valid_from"`
+	ValidFromGiven  bool   `json:"valid_from_given"`
 	OwnerTrust      int    `json:"owner_trust"`
 	Overlaps        []Ref  `json:"overlaps"`
 	Closes          []Ref  `json:"closes"`
@@ -79,8 +80,8 @@ type Approval struct {
 
 type Endorsement struct {
 	Actor   string `json:"actor"`
-	Vendor  string `json:"vendor"`
 	Verdict string `json:"verdict"`
+	Plan    string `json:"plan"`
 }
 
 type Proposal struct {
@@ -115,7 +116,10 @@ type Input struct {
 	Aggregates struct {
 		ProposalsLastHour int `json:"proposals_last_hour"`
 	} `json:"aggregates"`
-	Endorsements []Endorsement `json:"endorsements"`
+	Endorsements []Endorsement     `json:"endorsements"`
+	Voters       map[string]string `json:"voters"`
+	PlanDigest   string            `json:"plan_digest"`
+	Trigger      string            `json:"trigger"`
 	Consensus    *struct {
 		K        int      `json:"k"`
 		Eligible []string `json:"eligible"`
@@ -181,7 +185,8 @@ func decide(in *Input) []Finding {
 	if len(in.Proposal.Ops) > role.MaxOpsPerProposal {
 		find("limits.ops", "deny", -1, "too many ops for this role")
 	}
-	if in.Aggregates.ProposalsLastHour >= role.MaxProposalsPerHour && in.Approval.By == "" {
+	if in.Aggregates.ProposalsLastHour >= role.MaxProposalsPerHour && in.Approval.By == "" &&
+		(in.Trigger == "" || in.Trigger == "proposal") {
 		find("limits.rate", "deny", -1, "hourly rate limit")
 	}
 	for _, it := range in.Plan {
@@ -204,7 +209,7 @@ func decide(in *Input) []Finding {
 		default:
 			find("role.op", "deny", i, "op not configured for role")
 		}
-		if it.Op == "endorse" {
+		if it.Op == "endorse" || it.Op == "withdraw" {
 			if it.InstructionLike {
 				find("text.instruction_like", "review", i, "endorsement reason reads like instructions")
 			}
@@ -277,20 +282,28 @@ func consensus(in *Input, fs []Finding) []Finding {
 			allEligible = false
 		}
 	}
+	proposerVendor, ok := in.Voters[in.Actor.ID]
+	if !ok {
+		proposerVendor = in.Actor.Vendor
+	}
 	var objectors []string
 	vendors := map[string]bool{}
 	for _, e := range in.Endorsements {
+		vendor, registered := in.Voters[e.Actor]
+		if !registered {
+			continue // unregistered ids have no vote: actor ids aren't authenticated
+		}
 		if e.Verdict == "object" {
 			objectors = append(objectors, e.Actor)
-		} else if e.Verdict == "approve" && e.Vendor != in.Actor.Vendor && e.Vendor != "unknown" && e.Vendor != "human" {
-			vendors[e.Vendor] = true
+		} else if e.Verdict == "approve" && e.Plan == in.PlanDigest && vendor != proposerVendor {
+			vendors[vendor] = true
 		}
 	}
 	if len(objectors) > 0 {
 		sort.Strings(objectors)
 		return append(fs, Finding{"consensus.objection", "review", -1, "objected to by " + strings.Join(objectors, ", ")})
 	}
-	if allEligible && len(vendors) >= in.Consensus.K {
+	if allEligible && len(in.Voters) > 0 && len(vendors) >= in.Consensus.K {
 		var out []Finding
 		for _, f := range fs {
 			if f.Outcome != "review" {

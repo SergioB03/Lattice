@@ -61,7 +61,7 @@ def _days_before(ts: str, now: str) -> int:
 class BuiltinEngine:
     """Reference policy. Change the version string whenever semantics change."""
 
-    id = "lattice-py/2"  # /2: endorse op + multi-vendor consensus
+    id = "lattice-py/3"  # /3: registered voters, plan-bound votes, withdraw, no rate limit on re-decide
 
     def decide(self, inp: dict[str, Any]) -> dict[str, Any]:
         if inp.get("kind") != INPUT_KIND:
@@ -82,7 +82,8 @@ class BuiltinEngine:
         ops = inp["proposal"]["ops"]
         if len(ops) > role["max_ops_per_proposal"]:
             find("limits.ops", "deny", -1, f"{len(ops)} ops exceeds this role's limit of {role['max_ops_per_proposal']}; split the proposal.")
-        if inp["aggregates"]["proposals_last_hour"] >= role["max_proposals_per_hour"] and not approval["by"]:
+        if inp["aggregates"]["proposals_last_hour"] >= role["max_proposals_per_hour"] and not approval["by"] \
+                and inp.get("trigger", "proposal") == "proposal":
             find("limits.rate", "deny", -1, f"Rate limit: {role['max_proposals_per_hour']} proposals/hour for role {actor['role']!r}.")
 
         for item in inp["plan"]:
@@ -96,7 +97,7 @@ class BuiltinEngine:
             elif verdict == "review" and not own:
                 find("role.op", "review", i, f"Role {actor['role']!r} needs human review to {op}.")
 
-            if op == "endorse":
+            if op in ("endorse", "withdraw"):
                 if item["instruction_like"]:
                     find("text.instruction_like", "review", i, "Endorsement reason reads like instructions to a model.")
                 continue
@@ -135,13 +136,16 @@ class BuiltinEngine:
 
     @staticmethod
     def _consensus(inp: dict[str, Any], findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Multi-vendor consensus can clear *eligible* review findings, like Skylr review rounds: only agreement
-        across different vendors counts, one objection blocks, and some findings always need a human."""
+        """Multi-vendor consensus can clear *eligible* review findings, like Skylr review rounds.
+
+        Only owner-registered voters count, each pinned to one vendor; an approval counts only if it was cast
+        on the exact plan being decided now (plan_digest); distinct vendors other than the proposer's must reach
+        k; one registered objection blocks; and some findings always need a human (enforced by config)."""
         cons = inp.get("consensus")
-        endorsements = inp.get("endorsements", [])
         reviews = [f for f in findings if f["outcome"] == "review"]
         if not cons or not reviews or any(f["outcome"] == "deny" for f in findings):
             return findings
+        voters = inp.get("voters", {})
         ops = inp["proposal"]["ops"]
 
         def key(f: dict[str, Any]) -> str:
@@ -150,23 +154,25 @@ class BuiltinEngine:
             return f["rule_id"]
 
         eligible = all(key(f) in cons["eligible"] for f in reviews)
-        objectors = sorted(e["actor"] for e in endorsements if e["verdict"] == "object")
-        proposer_vendor = inp["actor"].get("vendor", "unknown")
-        vendors = sorted({e["vendor"] for e in endorsements if e["verdict"] == "approve"
-                          and e["vendor"] not in (proposer_vendor, "unknown", "human")})
+        counted = [e for e in inp.get("endorsements", []) if e["actor"] in voters]
+        objectors = sorted(e["actor"] for e in counted if e["verdict"] == "object")
+        proposer_vendor = voters.get(inp["actor"]["id"], inp["actor"].get("vendor", "unknown"))
+        vendors = sorted({voters[e["actor"]] for e in counted if e["verdict"] == "approve"
+                          and e["plan"] == inp["plan_digest"] and voters[e["actor"]] != proposer_vendor})
         if objectors:
             return findings + [{"rule_id": "consensus.objection", "outcome": "review", "op_index": -1,
                                 "detail": "Objected to by " + ", ".join(objectors) + "; a human decides."}]
-        if not eligible:
+        if not eligible or not voters:
             return findings
         if len(vendors) >= cons["k"]:
             return [f for f in findings if f["outcome"] != "review"] + [
                 {"rule_id": "consensus.reached", "outcome": "allow", "op_index": -1,
-                 "detail": f"Approved by {len(vendors)} vendors: {', '.join(vendors)}."}]
+                 "detail": f"Approved by {len(vendors)} vendors on plan {inp['plan_digest'][7:19]}: {', '.join(vendors)}."}]
         need = cons["k"] - len(vendors)
         return findings + [{"rule_id": "consensus.open", "outcome": "allow", "op_index": -1,
-                            "detail": f"Agents from {need} more vendor(s) other than {proposer_vendor}"
-                                      + (f" and {', '.join(vendors)}" if vendors else "") + " can approve this instead of a human."}]
+                            "detail": f"{need} more registered vendor(s) besides {proposer_vendor}"
+                                      + (f" and {', '.join(vendors)}" if vendors else "")
+                                      + f" can approve plan {inp['plan_digest'][7:19]} instead of a human."}]
 
 
 @dataclass

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from .core import Lattice
 
 
@@ -45,6 +47,10 @@ def seed(lat: Lattice, owner: str = "human:owner", passphrase: str | None = None
         {"op": "assert", "subject": "$qwen", "predicate": "works_on", "object": "$skylr"},
     ]
     lat.propose(owner, ops, "Demo seed", now="2026-10-27T12:00:00.000Z", passphrase=passphrase)
+    # Register which agents may vote in multi-vendor consensus, each pinned to its vendor.
+    for agent, vendor in [("agent:claude-code", "anthropic"), ("agent:codex-rem", "openai"),
+                          ("agent:antigravity", "google"), ("agent:ollama-qwen", "local")]:
+        lat.register_voter(agent, vendor, passphrase or "", now="2026-10-27T12:00:30.000Z")
     # Agents write too, each attributed and governed.
     lat.propose("agent:claude-code", [
         {"op": "assert", "subject": "decision:sqlite-is-the-source-of-truth-neo4j-is-a-projection", "predicate": "decided_by",
@@ -70,8 +76,9 @@ def seed(lat: Lattice, owner: str = "human:owner", passphrase: str | None = None
     lat.propose("agent:ollama-qwen", [
         {"op": "create_entity", "type": "project", "name": "Skyler", "summary": "Governance app"},
     ], "New project?", now="2026-10-27T12:08:00.000Z")
-    skyler = [r[0] for r in lat.conn.execute("SELECT id FROM proposals WHERE status='pending' AND body LIKE '%Skyler%'")]
+    skyler = [p for p in lat.list_proposals("pending") if "Skyler" in json.dumps(p["proposal"]["ops"])]
     if skyler:
-        lat.propose("agent:claude-code", [{"op": "endorse", "proposal": skyler[0], "verdict": "object",
+        lat.propose("agent:claude-code", [{"op": "endorse", "proposal": skyler[0]["proposal_id"], "verdict": "object",
+                                           "plan": skyler[0]["plan_digest"],
                                            "reason": "Looks like a misspelling of Skylr, not a new project."}],
                     "Cross-check from another vendor.", now="2026-10-27T12:09:00.000Z")

@@ -42,6 +42,10 @@ what), and its history (nothing silently rewritten).
   - `lattice ledger anchor` and commit the head somewhere agents can't write (another account,
     a phone note, or Skylr's ledger once integrated);
   - run agents under a separate OS user without write access to the DB file, talking to Lattice only through MCP.
+- **Consensus inherits that.** Vendors are derived from actor ids, so whoever configures MCP entries could launch
+  `agent:codex-fake` and get an "OpenAI" vote. Consensus is therefore limited to low-stakes findings, one objection
+  blocks it, and everything that overrules a human stays human-only. Treat consensus as "agents I configured agree",
+  not "independent parties agree", until agents carry their own keys.
 - **Actor ids aren't authenticated.** Whoever configures an MCP entry chooses its actor id.
   That's attribution, not identity. Per-agent tokens come with the HTTP transport.
 - **The instruction-like detector is a heuristic.** Fact-shaped manipulation passes (eval case `I05`).

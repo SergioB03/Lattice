@@ -260,6 +260,27 @@ def cmd_neo4j(ns) -> None:
     _out(sync_from_env(_open(ns), rebuild=ns.rebuild))
 
 
+def cmd_voters(ns) -> None:
+    lat = _open(ns)
+    if ns.action == "list":
+        for v in lat.config.data.get("voters", []):
+            print(f"{CYAN}{v['actor']}{RESET}  {v['vendor']}")
+        if not lat.config.data.get("voters"):
+            print("no registered voters: multi-vendor consensus is off")
+        return
+    if not ns.actor_id:
+        raise LatticeError("give an agent id")
+    data = lat.config.data
+    if ns.action == "add":
+        if not ns.vendor:
+            raise LatticeError("give a vendor, e.g. lattice voters add agent:codex-rem openai")
+        lat.register_voter(ns.actor_id, ns.vendor, _passphrase(ns) if lat.owner_secured else "")
+    else:
+        data["voters"] = [v for v in data.get("voters", []) if v["actor"] != ns.actor_id]
+        lat.set_config(data, _passphrase(ns) if lat.owner_secured else "")
+    print(f"{GREEN}ok{RESET}")
+
+
 def cmd_mcp_config(ns) -> None:
     """Print client config using this interpreter's absolute path, so it works without PATH or venv activation."""
     db = str(Path(ns.db).resolve())
@@ -382,6 +403,12 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("action", choices=["sync"])
     s.add_argument("--rebuild", action="store_true", help="wipe Lattice nodes in Neo4j and replay from seq 0")
     s.set_defaults(fn=cmd_neo4j)
+
+    s = sub.add_parser("voters", help="who may vote in multi-vendor consensus (owner only)")
+    s.add_argument("action", choices=["list", "add", "remove"])
+    s.add_argument("actor_id", nargs="?", default="")
+    s.add_argument("vendor", nargs="?", default="")
+    s.set_defaults(fn=cmd_voters)
 
     s = sub.add_parser("mcp-config", help="print MCP config for an agent client")
     s.add_argument("client", choices=["claude", "codex", "vscode", "json"])

@@ -16,7 +16,8 @@ from typing import Any
 from .canonical import digest
 
 ACTOR_RE = re.compile(r"^(human|agent|service):[a-z0-9][a-z0-9._-]{0,63}$")
-OPS = ("create_entity", "assert", "retract", "add_alias", "update_summary", "define_type", "define_predicate", "endorse")
+OPS = ("create_entity", "assert", "retract", "add_alias", "update_summary", "define_type", "define_predicate", "endorse",
+       "withdraw")
 OUTCOMES = ("allow", "review", "deny")
 
 DEFAULT_CONFIG: dict[str, Any] = {
@@ -49,6 +50,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
                 "define_type": "review",
                 "define_predicate": "review",
                 "endorse": "allow",
+                "withdraw": "allow",
             },
             "max_ops_per_proposal": 25,
             "max_proposals_per_hour": 120,
@@ -87,6 +89,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
         {"match": "agent:ollama*", "vendor": "local"},
         {"match": "agent:local*", "vendor": "local"},
     ],
+    # Voting needs registration: actor ids aren't authenticated, so only exact ids the owner registered
+    # (each pinned to a vendor) are counted. Empty means consensus is off. Change with `lattice voters add`.
+    "voters": [],
     # Multi-vendor consensus can stand in for a human on these review findings only. Overruling a
     # higher-trust author, suspected injection and history rewrites always need a human.
     "consensus": {
@@ -154,6 +159,14 @@ class Config:
         for rule in d.get("vendors", []):
             if set(rule) != {"match", "vendor"} or not str(rule["vendor"]).isidentifier():
                 raise ConfigError(f"vendor rule {rule} needs match and a simple vendor name")
+        seen_voters = set()
+        for v in d.get("voters", []):
+            if set(v) != {"actor", "vendor"} or not str(v["vendor"]).isidentifier() or v["vendor"] in ("human", "unknown"):
+                raise ConfigError(f"voter {v} needs an exact actor id and a vendor name")
+            validate_actor_id(v["actor"])
+            if not v["actor"].startswith("agent:") or v["actor"] in seen_voters:
+                raise ConfigError(f"voter {v['actor']} must be a unique agent:<name> id")
+            seen_voters.add(v["actor"])
         cons = d.get("consensus", {"k": 2, "eligible": []})
         if set(cons) != {"k", "eligible"} or not (isinstance(cons["k"], int) and cons["k"] >= 2):
             raise ConfigError("consensus needs k (>= 2) and eligible")
@@ -171,7 +184,12 @@ class Config:
                 return Actor(actor_id, role, self.data["roles"][role]["trust"], self.vendor(actor_id))
         return Actor(actor_id, "observer", self.data["roles"].get("observer", {"trust": 0})["trust"], self.vendor(actor_id))
 
+    def voters(self) -> dict[str, str]:
+        return {v["actor"]: v["vendor"] for v in self.data.get("voters", [])}
+
     def vendor(self, actor_id: str) -> str:
+        if actor_id in self.voters():
+            return self.voters()[actor_id]
         for rule in self.data.get("vendors", []):
             if fnmatch.fnmatchcase(actor_id, rule["match"]):
                 return rule["vendor"]

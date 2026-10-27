@@ -29,6 +29,8 @@ subset Skylr's `identity.Canonical` hashes, so `sha256(stdin bytes)` equals the
 | `plan[]` | per op: `index, op, effect` (create / insert / supersede / historical / noop / retract / alias / summary / define), `target`, `has_source`, `confidence_bp`, `closes[]` (facts it would close, with author and trust), `best_match` (entity resolution), `instruction_like` |
 | `read_set[]` | everything the core read to build the plan, **including negative reads** (an empty `facts` list means "no current fact") |
 | `aggregates` | `proposals_last_hour` for the actor |
+| `endorsements` | votes on this proposal: `{actor, vendor, verdict}` |
+| `consensus` | `{k, eligible}`: how many distinct vendors, and which findings they may settle |
 
 **Output** (stdout): JSON with `outcome` (`allow` \| `review` \| `deny`), `rule_id`
 and `reason`, plus optional `findings[]` (`rule_id, outcome, op_index, detail`).
@@ -50,6 +52,15 @@ network or time will fail the eval's consistency metric.
 | L2 replay | `lattice replay` / eval consistency |
 | Ledger header (`seq, run_id, ts, type, actor, payload_digest, prev_hash`) | identical header, identical hash rule |
 | Narrowing rules (limits only decrease) | roles: `ops`, `max_*`, `require_source`, `min_confidence_bp` |
+
+## Reference implementation in Go
+
+[`examples/engines/go/main.go`](../examples/engines/go/main.go) is a complete engine in Skylr's language:
+- typed structs for the whole input, `DisallowUnknownFields`, and no trailing data;
+- a port of `lattice-py/2`, including consensus.
+
+CI builds it and requires Cohen's κ = 1.0 against the Python engine across every scenario. A Skylr engine can start
+from this file and then tighten the policy. The eval then shows exactly where Skylr diverges.
 
 ## Suggested Skylr milestone
 

@@ -15,7 +15,7 @@ import sys
 from typing import Any
 
 from .config import validate_actor_id
-from .core import Lattice, LatticeError, default_db_path
+from .core import Lattice, LatticeError, _op_summary, default_db_path
 from .text import quote
 
 INSTRUCTIONS = """Lattice is a shared, governed knowledge graph. Other agents and humans read what you write.
@@ -26,7 +26,7 @@ Call lattice_schema before your first write in a session; types and predicates a
 
 
 def _fmt(obj: Any) -> str:
-    return json.dumps(obj, indent=1, ensure_ascii=False)
+    return json.dumps(obj, ensure_ascii=False, separators=(",", ":"))  # compact: small models pay per token
 
 
 def build_server(lat: Lattice, actor: str):
@@ -99,34 +99,38 @@ def build_server(lat: Lattice, actor: str):
 
     @server.tool(annotations=ro)
     def lattice_changes_since(seq: int, limit: int = 40, include_mine: bool = False) -> str:
-        """When resuming work: what *other* actors changed since ledger seq N (use the @seq from an earlier context call),
-        plus how your own proposals were resolved. Ends with the seq to use next time."""
+        """What *other* actors changed since ledger seq N (the @seq from an earlier lattice_context) and how your
+        proposals were resolved. Ends with next_seq. For just your own proposals, lattice_my_proposals is cheaper."""
         r = lat.changes_since(seq, viewer=actor, include_mine=include_mine, limit=limit)
         body = "\n".join(r["changes"]) or "Nothing new."
         return f"{body}\nnext_seq={r['next_seq']} (head {r['head_seq']})"
 
     @server.tool(annotations=ro)
-    def lattice_my_proposals(status: str = "pending", limit: int = 20) -> str:
-        """Your own proposals by status (pending, applied, denied, invalid, rejected). Check pending ones here once per task."""
-        items = lat.my_proposals(actor, status=status, limit=limit)
-        return "\n".join(f"- {p['proposal_id']} {p['status']} ({p['rule_id']}): {p['reason']} → {', '.join(p['targets'])}"
+    def lattice_my_proposals(status: str = "all", limit: int = 10) -> str:
+        """Your own proposals, newest first. status: all, pending, applied, denied, invalid, rejected, withdrawn.
+        Cheapest way to see what happened to your writes."""
+        try:
+            items = lat.my_proposals(actor, status=status, limit=limit)
+        except LatticeError as exc:
+            raise ValueError(str(exc)) from None
+        return "\n".join(f"- {p['proposal_id']} {p['status']} ({p['rule_id']}): {quote(p['summary'])}"
                          for p in items) or f"No {status} proposals."
 
     @server.tool(annotations=ro)
-    def lattice_review_queue(limit: int = 15) -> str:
-        """Other actors' proposals waiting for review. If you can verify one, endorse it with lattice_propose
-        op {"op":"endorse","proposal":id,"verdict":"approve"|"object","reason":...}. Agreement from agents of
-        different vendors can settle some findings without a human; one objection sends it to the human."""
+    def lattice_review_queue(limit: int = 10) -> str:
+        """Other actors' proposals awaiting review. To vote, lattice_propose one op:
+        {"op":"endorse","proposal":ID,"plan":PLAN,"verdict":"approve"|"object","reason":"..."} copying ID and PLAN from here.
+        Registered agents from different vendors agreeing can settle some findings; one objection sends it to a human."""
         items = [p for p in lat.list_proposals("pending", limit=50) if p["actor"] != actor][:limit]
         if not items:
             return "Nothing waiting."
         out = []
         for p in items:
-            ops = "; ".join(json.dumps(o, ensure_ascii=False)[:160] for o in p["proposal"]["ops"][:3])
+            ops = "; ".join(quote(_op_summary(o)) for o in p["proposal"]["ops"][:3])
             votes = ", ".join(f"{e['actor']}={e['verdict']}" for e in p["endorsements"]) or "none"
-            out.append(f"- {p['proposal_id']} by {p['actor']} ({p.get('rule_id', '')}): {quote(p.get('reason', ''))}\n"
-                       f"  ops: {quote(ops)}\n  endorsements: {votes}"
-                       + (f"\n  consensus: {p['consensus']}" if p["consensus"] else ""))
+            out.append(f"- {p['proposal_id']} by {p['actor']}: {ops}\n  why flagged: {p.get('rule_id', '')}: "
+                       f"{quote(p.get('reason', ''))}\n  plan: {p.get('plan_digest', '')}\n  votes: {votes}"
+                       + (f"\n  {p['consensus']}" if p["consensus"] and p["consensus"] != p.get("reason") else ""))
         return "\n".join(out)
 
     @server.tool(annotations=ro)
@@ -144,7 +148,7 @@ def build_server(lat: Lattice, actor: str):
           create_entity(type, name, summary?, aliases?, ref?) · assert(subject, predicate, object|value, source, confidence 0-100?,
           valid_from?, evidence?) · retract(fact, reason) · add_alias(entity, alias) · update_summary(entity, summary) ·
           define_type(name, description) · define_predicate(name, domain, range, cardinality, description) ·
-          endorse(proposal, verdict approve|object, reason?)  (vote on someone else's pending proposal)
+          endorse(proposal, plan, verdict, reason?) and withdraw(proposal, reason?): alone in their own proposal
         Example: [{"op":"create_entity","type":"tool","name":"Python","ref":"$py"},
                   {"op":"assert","subject":"project:lattice","predicate":"uses","object":"$py","source":"pyproject.toml","confidence":95}]
         Use 'object' for predicates that point at entities and 'value' for literal predicates (lattice_schema says which).

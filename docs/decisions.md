@@ -69,3 +69,48 @@ A synthetic load of 4,000 entities and 2,000 facts surfaced two problems:
 - **Entity resolution was a quadratic fuzzy scan.** Resolution now uses blocking: exact keys, a
   look-alike skeleton index, and FTS trigram candidates. A single agent create went from 111 ms
   to about 3 ms at that size. Context reads stay at about 1 ms, search about 2 ms, and verify-plus-rebuild about 2 s.
+
+## Round 3: multi-vendor consensus and its red-team (Oct 27, 2026)
+
+**Built:** an `endorse` op lets agents vote on other actors' pending proposals, like the Skylr review rounds.
+Approval from *k* = 2 distinct vendors can settle low-stakes review findings. One objection sends the proposal to a human.
+Overruling a human, suspected injection, history rewrites and schema changes are hard-coded as human-only;
+the config refuses to make them eligible.
+
+**Red-team (independent agent), all confirmed and fixed:**
+
+| # | Finding | Fix |
+|---|---|---|
+| R3-1 (High) | A single agent could invent `agent:codex-x` / `agent:gemini-y` ids and reach "consensus" alone. Vendors came from id prefixes, and ids aren't authenticated | Only **owner-registered voters** count (`lattice voters add agent:codex-rem openai`). Registration is an owner-signed `config.changed` event that the audit checks. Unregistered votes are recorded but can neither approve nor block, so there's no DoS |
+| R3-2 (High) | Votes were bound to a proposal id, not to what the voter saw. State drift could turn a harmless insert into overruling someone, and consensus cleared findings no voter saw | Every vote carries the **plan digest** the voter saw (shown in `lattice_review_queue`). An approval counts only if it matches the plan being decided now |
+| R3-3 (Med) | Any vote re-decided the target under the *proposer's* hourly rate limit, so one vote could permanently deny it | Decisions record a `trigger`. Rate limits apply only when a proposal is first submitted |
+| R3-4 (Low) | Vote floods re-decided on every vote | Only registered votes trigger a re-decide. Proposals are capped at 20 endorsements |
+| R3-5 (Low) | Proposals could carry votes, so votes could be voted through in chains | Votes (and withdrawals) must be alone in their proposal, and proposals containing votes can't be voted on |
+
+Engine bumped to `lattice-py/3`.
+
+**What held, according to the red-team:** human-only findings, deny passthrough, self-votes, double votes,
+observer votes, owner-passphrase gating, objection blocking, and audit/replay after every consensus path.
+
+## Round 4: a Go engine and a small-model AX test (Oct 27, 2026)
+
+**Go reference engine** (`examples/engines/go`): strict Skylr-style decoding (unknown fields rejected,
+fail closed) and a full port of `lattice-py/3`. CI builds it and requires Cohen's κ = 1.0 against the Python
+engine over every scenario. It got κ = 1.0 on the first run, and again after round 3's semantics changed.
+
+**Small-model AX test** (an agent role-playing a 9B local model with a 2k-token budget per task):
+
+| Finding | Fix |
+|---|---|
+| Unknown names said "create it", which produced near-duplicates (High) | Resolution answers "Did you mean project:skylr (90%)? Pass that id." Search is typo-tolerant |
+| Denied/pending results listed `created` ids that don't exist (High) | `created` only appears when applied |
+| Predicate hints were by spelling only (`written_in` → `located_in`) (Med) | The error also lists predicates that fit the subject type and object/value shape |
+| Silent bad status filter; no cheap "what happened to mine" (Med) | `lattice_my_proposals(status="all")` with validation and one-line summaries |
+| Pretty-printed JSON doubled token cost (Low) | Compact JSON everywhere |
+| Couldn't see own vendor or voter status; couldn't withdraw mistakes (Low) | `whoami` shows vendor and `registered_voter`; new `withdraw` op |
+
+Tool list cost: about 1,540 tokens for 12 tools. It's kept because the `lattice_propose` description carries the copyable example
+that let the small model write correctly on its first call.
+
+**Windows check:** `lattice mcp-config` now emits the venv's own Python by absolute path (no PATH or activation needed).
+`.vscode/mcp.json` targets `.venv\Scripts\python.exe`, CI covers Windows on Python 3.12 and 3.13, and the CLI forces UTF-8 output.

@@ -62,10 +62,10 @@ def run_case(engine: Engine, case: dict[str, Any], actor: str | None = None, mut
     lat = _fresh(engine)
     prelude_ids: list[str] = []
     for i, pre in enumerate(case.get("prelude", [])):
-        pre_ops = _bind_prelude(prelude_ids, copy.deepcopy(pre["ops"]))
+        pre_ops = _bind_prelude(prelude_ids, copy.deepcopy(pre["ops"]), lat)
         r = lat.propose(pre["actor"], pre_ops, pre.get("justification", ""), now=f"2026-10-28T08:{i % 60:02d}:00.000Z")
         prelude_ids.append(r["proposal_id"])
-    ops = _bind_prelude(prelude_ids, _bind_facts(lat, copy.deepcopy(case["ops"])))
+    ops = _bind_prelude(prelude_ids, _bind_facts(lat, copy.deepcopy(case["ops"])), lat)
     if mutate:
         ops = mutate(ops)
     import time
@@ -87,12 +87,16 @@ def run_case(engine: Engine, case: dict[str, Any], actor: str | None = None, mut
     return out
 
 
-def _bind_prelude(ids: list[str], ops: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Replace "$prelude:N" with the id of the N-th prelude proposal (for endorsement cases)."""
+def _bind_prelude(ids: list[str], ops: list[dict[str, Any]], lat: Lattice) -> list[dict[str, Any]]:
+    """Replace "$prelude:N" with the N-th prelude proposal's id, and "$plan:N" with the plan digest a voter
+    would currently see for it (what lattice_review_queue shows)."""
     for op in ops:
         for k, v in list(op.items()):
             if isinstance(v, str) and v.startswith("$prelude:"):
                 op[k] = ids[int(v.split(":")[1])]
+            elif isinstance(v, str) and v.startswith("$plan:"):
+                pid = ids[int(v.split(":")[1])]
+                op[k] = next((p["plan_digest"] for p in lat.list_proposals("pending", limit=200) if p["proposal_id"] == pid), "")
     return ops
 
 

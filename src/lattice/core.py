@@ -40,11 +40,12 @@ OP_FIELDS: dict[str, tuple[set[str], set[str]]] = {  # op -> (required, optional
     "update_summary": ({"entity", "summary"}, set()),
     "define_type": ({"name", "description"}, set()),
     "define_predicate": ({"name", "domain", "range", "cardinality"}, {"description"}),
-    "endorse": ({"proposal", "verdict"}, {"reason"}),
+    "endorse": ({"proposal", "verdict", "plan"}, {"reason"}),
+    "withdraw": ({"proposal"}, {"reason"}),
 }
 # Fields that are names/identifiers: forced onto one line so they can't forge extra lines in outputs.
 ONE_LINE = {"type", "name", "aliases", "ref", "subject", "object", "predicate", "fact", "entity", "alias", "source",
-            "valid_from", "cardinality", "domain", "range", "proposal", "verdict"}
+            "valid_from", "cardinality", "domain", "range", "proposal", "verdict", "plan"}
 CLIENT_FIELDS = {"model", "run_id", "tool"}
 RUN_ID = "lattice"
 
@@ -215,6 +216,19 @@ class Lattice:
         self._tx(lambda ts: store.append_and_apply(self.conn, run_id=RUN_ID, type="owner.passphrase_set",
                                                    actor=self.owner, payload=payload, ts=ts), now)
 
+    def set_config(self, data: dict[str, Any], passphrase: str, now: str | None = None) -> None:
+        """Replace the governed config (roles, voters, consensus). Owner-only, MAC-signed, audited."""
+        cfg = Config(data)
+        key = self._owner_key(self.owner, passphrase)
+        payload = {"config": cfg.data, "owner_mac": _mac(key, cfg.digest()) if key else ""}
+        self._tx(lambda ts: store.append_and_apply(self.conn, run_id=RUN_ID, type="config.changed", actor=self.owner,
+                                                   payload=payload, ts=ts), now)
+
+    def register_voter(self, actor: str, vendor: str, passphrase: str, now: str | None = None) -> None:
+        data = self.config.data
+        data["voters"] = [v for v in data.get("voters", []) if v["actor"] != actor] + [{"actor": actor, "vendor": vendor}]
+        self.set_config(data, passphrase, now)
+
     def _owner_key(self, actor: str, passphrase: str) -> bytes | None:
         """Check a human's authority. Returns the MAC key, or None in insecure dev mode before a passphrase exists."""
         if not actor.startswith("human:"):
@@ -285,8 +299,11 @@ class Lattice:
         store.append_and_apply(self.conn, run_id=RUN_ID, type="proposal.received", actor=actor, payload=payload, ts=ts)
         return self._decide_and_apply(pid, body, ts, approval=None, key=None)
 
-    def _prepare(self, pid: str, body: dict[str, Any], ts: str, approval: dict[str, Any] | None) -> tuple[dict, list, list]:
-        """Plan the proposal against current state and build the full policy input closure. Pure w.r.t. the DB."""
+    def _prepare(self, pid: str, body: dict[str, Any], ts: str, approval: dict[str, Any] | None,
+                 trigger: str = "") -> tuple[dict, list, list]:
+        """Plan the proposal against current state and build the full policy input closure. Pure w.r.t. the DB.
+        ``trigger`` says why we're deciding: "proposal" (first time), "approval" (a human) or "endorsement"."""
+        trigger = trigger or ("approval" if approval else "proposal")
         actor = self.config.actor(body["actor"])
         plan, effects, read_set = self._plan(pid, body, ts)
         since = format_ts(parse_ts(ts) - timedelta(hours=1))
@@ -309,16 +326,19 @@ class Lattice:
             "plan": plan,
             "read_set": read_set,
             "aggregates": {"proposals_last_hour": recent},
-            "endorsements": [{"actor": r[0], "vendor": r[1], "verdict": r[2]} for r in self.conn.execute(
-                "SELECT actor, vendor, verdict FROM endorsements WHERE proposal_id=? ORDER BY seq, actor", (pid,))],
+            "endorsements": [{"actor": r[0], "verdict": r[1], "plan": r[2]} for r in self.conn.execute(
+                "SELECT actor, verdict, plan FROM endorsements WHERE proposal_id=? ORDER BY seq, actor", (pid,))],
+            "voters": cfg.voters(),
             "consensus": cfg.data.get("consensus", {"k": 2, "eligible": []}),
+            "plan_digest": plan_digest(plan),
+            "trigger": trigger,
         }
         return policy_input, effects, plan
 
     def _decide_and_apply(self, pid: str, body: dict[str, Any], ts: str, approval: dict[str, Any] | None,
-                          key: bytes | None) -> dict[str, Any]:
+                          key: bytes | None, trigger: str = "") -> dict[str, Any]:
         try:
-            policy_input, effects, plan = self._prepare(pid, body, ts, approval)
+            policy_input, effects, plan = self._prepare(pid, body, ts, approval, trigger)
         except _Invalid as inv:
             errors = [{"op_index": inv.index, "error": inv.message}]
             store.append_and_apply(self.conn, run_id=RUN_ID, type="proposal.invalid", actor=body["actor"],
@@ -344,11 +364,15 @@ class Lattice:
                                    payload={"proposal_id": pid, "actor": body["actor"], "effects": effects}, ts=ts)
             status = "applied"
             # An endorsement may complete a multi-vendor consensus: re-decide the target on current state.
-            for target in sorted({e["proposal"] for e in effects if e["effect"] == "endorsement_added"}):
-                row = self.conn.execute("SELECT body, status FROM proposals WHERE id=?", (target,)).fetchone()
+            voters = self.config.voters()
+            for e in effects:
+                if e["effect"] != "endorsement_added" or e["actor"] not in voters:
+                    continue  # unregistered votes are recorded but can't change an outcome: no re-decide
+                row = self.conn.execute("SELECT body, status FROM proposals WHERE id=?", (e["proposal"],)).fetchone()
                 if row and row[1] == "pending":
-                    r = self._decide_and_apply(target, json.loads(row[0]), ts, approval=None, key=None)
-                    redecided.append({"proposal_id": target, "status": r["status"], "rule_id": r.get("rule_id", "")})
+                    r = self._decide_and_apply(e["proposal"], json.loads(row[0]), ts, approval=None, key=None,
+                                               trigger="endorsement")
+                    redecided.append({"proposal_id": e["proposal"], "status": r["status"], "rule_id": r.get("rule_id", "")})
         nxt = {
             "applied": "Done.",
             "pending": "A human will review this. Do not re-propose; check lattice_my_proposals once later.",
@@ -365,7 +389,8 @@ class Lattice:
             "next": nxt,
             "decision_digest": ddig,
             "effects": [_effect_summary(e) for e in effects] if status == "applied" else [],
-            "created": {p["ref"]: p["target"] for p in plan if p["op"] == "create_entity" and p["ref"]},
+            **({"created": {p["ref"]: p["target"] for p in plan if p["op"] == "create_entity" and p["ref"]}}
+               if status == "applied" else {}),
             **({"redecided": redecided} if redecided else {}),
         }
 
@@ -431,8 +456,13 @@ class Lattice:
             return matches[0]
         if len(matches) > 1:
             raise _Invalid(index, f"{ref!r} is ambiguous: " + ", ".join(m["id"] for m in matches[:5]) + ". Use an id.")
+        best = self._best_match(ref, [])
+        if best["id"] and best["score_bp"] >= 7500:
+            raise _Invalid(index, f"no entity named {ref!r}. Did you mean {best['id']} ({best['name']!r}, "
+                                  f"{best['score_bp'] // 100}% similar)? Pass that id.")
         hits = self.search(ref, limit=3)
-        hint = (" Closest: " + ", ".join(h["id"] for h in hits) + ".") if hits else " Create it with create_entity first."
+        hint = (" Closest: " + ", ".join(h["id"] for h in hits) + ".") if hits else \
+            " If it's genuinely new, create it with create_entity in the same proposal and refer to it by $ref."
         raise _Invalid(index, f"no entity matches {ref!r}.{hint}")
 
     def _name_matches(self, name: str) -> list[dict[str, Any]]:
@@ -523,7 +553,7 @@ class Lattice:
             if extra := keys - required - optional:
                 raise _Invalid(i, f"{kind} has unknown fields {sorted(extra)}; allowed: {sorted(required | optional)}")
             item = {"index": i, "op": kind, "effect": "", "target": "", "has_source": False, "confidence_bp": 10000,
-                    "cardinality": "", "valid_from": "", "owner_trust": 0, "overlaps": [],
+                    "cardinality": "", "valid_from": "", "valid_from_given": False, "owner_trust": 0, "overlaps": [],
                     "closes": [], "best_match": {"id": "", "name": "", "score_bp": 0, "type": ""},
                     "instruction_like": just_flag, "ref": ""}
             texts: list[str] = []
@@ -565,6 +595,15 @@ class Lattice:
             elif kind == "assert":
                 subj = self._resolve(op["subject"], i, local)
                 pname = self._str(op, "predicate", i, limit=40)
+                if pname not in schema.predicates:
+                    fits = sorted(n for n, p in schema.predicates.items() if p.domain == "*" or subj["type"] in p.domain)
+                    if "object" in op:
+                        fits = [n for n in fits if not schema.predicates[n].is_literal]
+                    elif "value" in op:
+                        fits = [n for n in fits if schema.predicates[n].is_literal]
+                    near = schema.suggest(pname, list(schema.predicates)).strip()
+                    raise _Invalid(i, f"unknown predicate {pname!r}. {near} Predicates that fit a {subj['type']} subject"
+                                      f" here: {', '.join(fits)}.")
                 try:
                     pred = schema.require_predicate(pname)
                     schema.check_domain(pred, subj["type"])
@@ -597,7 +636,7 @@ class Lattice:
                         "actor": actor.id, "trust": actor.trust, "source": source, "evidence": evidence, "proposal_id": pid}
                 same = [f for f in current if f["object"] == obj_id and f["value"] == value]
                 item.update(target=subj["id"], has_source=bool(source), confidence_bp=conf * 100,
-                            cardinality=pred.cardinality, valid_from=valid_from,
+                            cardinality=pred.cardinality, valid_from=valid_from, valid_from_given=bool(op.get("valid_from")),
                             owner_trust=self._owner_trust(subj, local))
                 if same:
                     item["effect"] = "noop"
@@ -683,19 +722,37 @@ class Lattice:
                 effects.append({"effect": "type_defined", "name": name, "description": desc})
                 texts.append(desc)
 
-            elif kind == "endorse":
+            elif kind in ("endorse", "withdraw"):
+                if any(o.get("op") not in ("endorse", "withdraw") for o in body["ops"] if isinstance(o, dict)):
+                    raise _Invalid(i, f"{kind} ops must be in a proposal of their own (no other op types)")
                 target = self._str(op, "proposal", i, limit=40)
-                verdict = self._str(op, "verdict", i, limit=10)
                 reason = self._str(op, "reason", i, required=False, limit=500)
-                if verdict not in ("approve", "object"):
-                    raise _Invalid(i, "verdict must be 'approve' or 'object'")
-                row = self.conn.execute("SELECT actor, status FROM proposals WHERE id=?", (target,)).fetchone()
+                row = self.conn.execute("SELECT actor, status, body FROM proposals WHERE id=?", (target,)).fetchone()
                 if not row:
                     raise _Invalid(i, f"no proposal {target!r}")
                 if row[1] != "pending":
-                    raise _Invalid(i, f"proposal {target} is {row[1]}; only pending proposals take endorsements")
+                    raise _Invalid(i, f"proposal {target} is {row[1]}, not pending")
+                if kind == "withdraw":
+                    if row[0] != actor.id:
+                        raise _Invalid(i, "you can only withdraw your own proposals")
+                    read_set.append({"key": f"withdraw:{target}", "proposer": row[0], "status": row[1]})
+                    item.update(effect="withdraw", target=actor.id)
+                    effects.append({"effect": "proposal_withdrawn", "proposal": target, "reason": reason})
+                    texts.append(reason)
+                    item["instruction_like"] = item["instruction_like"] or any(looks_like_instruction(t) for t in texts if t)
+                    plan.append(item)
+                    continue
+                verdict = self._str(op, "verdict", i, limit=10)
+                seen_plan = self._str(op, "plan", i, limit=80)
+                if verdict not in ("approve", "object"):
+                    raise _Invalid(i, "verdict must be 'approve' or 'object'")
                 if row[0] == actor.id:
                     raise _Invalid(i, "you can't endorse your own proposal")
+                if any(o.get("op") in ("endorse", "withdraw") for o in json.loads(row[2])["ops"]):
+                    raise _Invalid(i, "votes can't be voted on")
+                n_votes = self.conn.execute("SELECT COUNT(*) FROM endorsements WHERE proposal_id=?", (target,)).fetchone()[0]
+                if n_votes >= 20:
+                    raise _Invalid(i, f"{target} already has the maximum of 20 endorsements")
                 prior = self.conn.execute("SELECT verdict FROM endorsements WHERE proposal_id=? AND actor=?",
                                           (target, actor.id)).fetchone()
                 if prior or any(e.get("proposal") == target for e in effects if e["effect"] == "endorsement_added"):
@@ -703,7 +760,7 @@ class Lattice:
                 read_set.append({"key": f"endorse:{target}", "proposer": row[0], "status": row[1]})
                 item.update(effect="endorse", target=f"proposal:{target}")
                 effects.append({"effect": "endorsement_added", "proposal": target, "actor": actor.id, "vendor": actor.vendor,
-                                "verdict": verdict, "reason": reason})
+                                "verdict": verdict, "reason": reason, "plan": seen_plan})
                 texts.append(reason)
 
             elif kind == "define_predicate":
@@ -733,6 +790,8 @@ class Lattice:
         if row[5]:
             d = json.loads(row[5])
             out.update(rule_id=d["rule_id"], reason=d["reason"], engine=d["engine"])
+        body = self.conn.execute("SELECT body FROM proposals WHERE id=?", (proposal_id,)).fetchone()
+        out["summary"] = "; ".join(_op_summary(o) for o in json.loads(body[0])["ops"][:3])
         if row[3]:
             detail = json.loads(row[3])
             if row[2] in ("invalid", "rejected"):
@@ -749,10 +808,18 @@ class Lattice:
             d = self._latest_decision(pid)
             st["findings"] = [f for f in (d or {}).get("findings", []) if f["outcome"] != "allow"]
             st["consensus"] = next((f["detail"] for f in (d or {}).get("findings", []) if f["rule_id"].startswith("consensus.")), "")
-            st["endorsements"] = [{"actor": r[0], "vendor": r[1], "verdict": r[2], "reason": r[3]} for r in self.conn.execute(
-                "SELECT actor, vendor, verdict, reason FROM endorsements WHERE proposal_id=? ORDER BY seq", (pid,))]
             inp = self.conn.execute("SELECT input FROM decisions WHERE proposal_id=? ORDER BY seq DESC LIMIT 1", (pid,)).fetchone()
             st["plan"] = json.loads(inp[0])["plan"] if inp else []
+            if status == "pending":  # what a voter would be agreeing to *now*, which may differ from the last decision
+                try:
+                    _, _, plan_now = self._prepare(pid, st["proposal"], now_ts(), None, "endorsement")
+                    st["plan_digest"] = plan_digest(plan_now)
+                    st["plan_changed"] = st["plan_digest"] != plan_digest(st["plan"])
+                except _Invalid as inv:
+                    st["plan_digest"], st["plan_changed"] = "", True
+                    st["consensus"] = f"No longer plans on current state: {inv.message}"
+            st["endorsements"] = [{"actor": r[0], "vendor": r[1], "verdict": r[2], "reason": r[3]} for r in self.conn.execute(
+                "SELECT actor, vendor, verdict, reason FROM endorsements WHERE proposal_id=? ORDER BY seq", (pid,))]
             out.append(st)
         return out
 
@@ -801,6 +868,9 @@ class Lattice:
             like = f"%{q}%"
             rows = self.conn.execute("SELECT id, type, name, summary FROM entities WHERE name LIKE ? OR id LIKE ? LIMIT 200",
                                      (like, like)).fetchall()
+        if not rows:  # typo-tolerant fallback: same blocking + similarity as entity resolution
+            ids = sorted({c[0] for c in self._candidates(q) if similarity_bp(q, c[1]) >= 6000})
+            rows = [self.conn.execute("SELECT id, type, name, summary FROM entities WHERE id=?", (i,)).fetchone() for i in ids]
         out = []
         for eid, typ, name, summary in rows:
             if types and typ not in types:
@@ -1035,12 +1105,20 @@ class Lattice:
                 break
         return {"changes": lines, "next_seq": last, "head_seq": self.head()[0]}
 
+    STATUSES = ("pending", "applied", "denied", "invalid", "rejected", "withdrawn")
+
     def my_proposals(self, actor: str, status: str = "pending", limit: int = 20) -> list[dict[str, Any]]:
+        if status not in (*self.STATUSES, "all"):
+            raise LatticeError(f"status must be one of {', '.join(self.STATUSES)} or all")
         out = []
-        for p in self.list_proposals(status, limit=limit, actor=actor):
+        statuses = self.STATUSES if status == "all" else (status,)
+        items = sorted((p for s in statuses for p in self.list_proposals(s, limit=limit, actor=actor)),
+                       key=lambda p: p["received_at"], reverse=True)[:limit]
+        for p in items:
             out.append({"proposal_id": p["proposal_id"], "status": p["status"], "rule_id": p.get("rule_id", ""),
                         "reason": p.get("reason", ""), "ops": len(p["proposal"]["ops"]),
-                        "targets": sorted({i["target"] for i in p["plan"] if i["target"]})})
+                        "targets": sorted({i["target"] for i in p["plan"] if i["target"]}),
+                        "summary": "; ".join(_op_summary(o) for o in p["proposal"]["ops"][:3])})
         return out
 
     def stats(self) -> dict[str, Any]:
@@ -1064,7 +1142,8 @@ class Lattice:
     def whoami(self, actor: str) -> dict[str, Any]:
         a = self.config.actor(actor)
         role = self.config.role(a.role)
-        return {"actor": a.id, "role": a.role, "trust": a.trust, "ops": role["ops"],
+        return {"actor": a.id, "role": a.role, "trust": a.trust, "vendor": a.vendor,
+                "registered_voter": a.id in self.config.voters(), "ops": role["ops"],
                 "max_ops_per_proposal": role["max_ops_per_proposal"], "max_proposals_per_hour": role["max_proposals_per_hour"],
                 "require_source": role["require_source"], "min_confidence": role["min_confidence_bp"] // 100,
                 "own_entity": a.id if self.conn.execute("SELECT 1 FROM entities WHERE id=?", (a.id,)).fetchone() else "",
@@ -1132,7 +1211,8 @@ class Lattice:
                     body = json.loads(rc.execute("SELECT body FROM proposals WHERE id=?", (p["proposal_id"],)).fetchone()[0])
                     approval = inp["approval"] if inp["approval"]["by"] else None
                     try:
-                        again, effects, _ = replay._prepare(p["proposal_id"], body, inp["now"], approval)
+                        again, effects, _ = replay._prepare(p["proposal_id"], body, inp["now"], approval,
+                                                            inp.get("trigger", ""))
                     except _Invalid as inv:
                         again, effects = None, []
                         problem(ev, f"proposal does not plan on the state at that point: {inv.message}")
@@ -1155,6 +1235,8 @@ class Lattice:
                         problem(ev, "applied effects differ from what the proposal plans to on prior state")
                 elif ev.type == "proposal.rejected":
                     check_mac(ev, {"proposal_id": p["proposal_id"], "reason": p["reason"]})
+                elif ev.type == "config.changed":
+                    check_mac(ev, digest(p["config"]))
                 elif ev.type == "owner.passphrase_set":
                     old = store.get_meta(rc, "owner_hash")
                     if old and key is not None:
@@ -1231,7 +1313,28 @@ def _effect_summary(e: dict[str, Any]) -> str:
         return f"alias {quote(e['alias'])} → {e['entity']}"
     if k == "summary_updated":
         return f"summary updated on {e['entity']}"
+    if k == "endorsement_added":
+        return f"{e['actor']} {e['verdict']}s {e['proposal']}"
+    if k == "proposal_withdrawn":
+        return f"withdrew {e['proposal']}"
     return f"{k} {e.get('name', '')}"
+
+
+def plan_digest(plan: list[dict[str, Any]]) -> str:
+    """What a voter is agreeing to: the planned effects, targets, what they close and how names resolved."""
+    keep = ("index", "op", "effect", "target", "closes", "overlaps", "best_match", "cardinality",
+            "owner_trust", "confidence_bp", "instruction_like")
+    # A defaulted valid_from is "now" at decision time; only an explicit one is part of what voters agree to.
+    return digest([{k: item[k] for k in keep if k in item}
+                   | ({"valid_from": item["valid_from"]} if item.get("valid_from_given") else {}) for item in plan])
+
+
+def _op_summary(op: Any) -> str:
+    if not isinstance(op, dict):
+        return "?"
+    bits = [str(op.get(k)) for k in ("op", "subject", "entity", "type", "name", "predicate", "object", "value", "proposal")
+            if op.get(k) is not None]
+    return " ".join(bits)[:120]
 
 
 def default_db_path() -> str:

@@ -113,11 +113,30 @@ The built-in policy (`lattice-py/1`):
 - **Retraction, alias edits and schema changes by agents go to review.**
 - **Rate and size limits apply per role.**
 
+## Agents settle the small stuff together
+
+Pending proposals don't all have to wait for you. Agents can **endorse** each other's proposals
+(`{"op": "endorse", "proposal": "p_…", "verdict": "approve" | "object"}`), the way your Skylr review rounds work:
+
+- **Only distinct vendors count.** Approval from two different vendors (say Claude and Codex) settles low-stakes
+  findings: low confidence, near-duplicate names, single-value claims, alias edits, retracting another agent's fact.
+  Three Claude instances agreeing still count as one voice, and the proposer's own vendor doesn't count.
+- **One objection sends it to you.**
+- **Some things always need you:** overruling a human, suspected injection, rewriting history, and schema changes.
+  The config refuses to make those consensus-eligible.
+
+`lattice_review_queue` shows agents what's waiting, with votes so far. Consensus decisions are ordinary
+ledger events, so `ledger audit` re-derives them too.
+
 ## The Skylr test bed
 
 Lattice is built to be governed by [Skylr](https://github.com/SergioB03/Skylr). Any executable that reads
 `lattice.dev/policy-input/v1` JSON on stdin and prints a decision can replace the built-in engine
 ([protocol](docs/skylr-integration.md)):
+
+A **Go reference engine** ([examples/engines/go](examples/engines/go/main.go)) proves the protocol crosses languages.
+It decodes the input Skylr-style (unknown fields rejected, fail closed) and agrees with the Python engine on every
+eval case (κ = 1.0, checked in CI). It's the natural starting point for `skylr graph evaluate`.
 
 ```bash
 lattice --engine "skylr graph evaluate" ui                              # Skylr disposes, Lattice applies
@@ -180,9 +199,9 @@ docs/             architecture, decisions (with red-team rounds), research, thre
 
 ## Roadmap
 
-1. **Consensus engine.** A proposal applies only when *k* agents from different vendors agree, mirroring the Skylr review rounds.
-2. **Semantic injection judge.** A local Qwen model on the rig, run as a command engine. It targets eval case `I05`.
-3. **Skylr adapter.** `skylr graph evaluate`, with Lattice's ledger head anchored in Skylr's ledger.
+1. **Semantic injection judge.** A local Qwen model on the rig, run as a command engine. It targets eval case `I05`.
+2. **Skylr adapter.** Port the Go reference engine into `skylr graph evaluate`, and anchor Lattice's ledger head in Skylr's ledger.
+3. **Identity for agents.** Per-agent keys so vendor attribution can't be spoofed (today consensus trusts the actor id the server was launched with).
 4. Optional embeddings, entity merges with undo, and streamable HTTP with per-agent tokens.
 
 <sub>Apache-2.0 · built by Sergio Banuelos with Claude Code · challenged by its own red-team agents (see <a href="docs/decisions.md">decisions.md</a>)</sub>

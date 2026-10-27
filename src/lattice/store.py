@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS entities(
 CREATE INDEX IF NOT EXISTS entities_name_key ON entities(name_key);
 CREATE TABLE IF NOT EXISTS endorsements(
   proposal_id TEXT NOT NULL, actor TEXT NOT NULL, vendor TEXT NOT NULL, verdict TEXT NOT NULL, reason TEXT NOT NULL,
-  seq INTEGER NOT NULL, PRIMARY KEY(proposal_id, actor));
+  plan TEXT NOT NULL, seq INTEGER NOT NULL, PRIMARY KEY(proposal_id, actor));
 CREATE TABLE IF NOT EXISTS skeletons(skel TEXT NOT NULL, entity_id TEXT NOT NULL, label TEXT NOT NULL, PRIMARY KEY(skel, entity_id, label));
 CREATE TABLE IF NOT EXISTS aliases(
   entity_id TEXT NOT NULL REFERENCES entities(id), alias TEXT NOT NULL, alias_key TEXT NOT NULL,
@@ -134,8 +134,11 @@ def apply_effects(conn: sqlite3.Connection, effects: Iterable[dict[str, Any]], *
             conn.execute("UPDATE facts SET valid_to=? WHERE id=? AND status IN ('superseded','historical')",
                          (e["valid_to"], e["id"]))
         elif kind == "endorsement_added":
-            conn.execute("INSERT INTO endorsements VALUES(?,?,?,?,?,?)",
-                         (e["proposal"], e["actor"], e["vendor"], e["verdict"], e["reason"], seq))
+            conn.execute("INSERT INTO endorsements VALUES(?,?,?,?,?,?,?)",
+                         (e["proposal"], e["actor"], e["vendor"], e["verdict"], e["reason"], e["plan"], seq))
+        elif kind == "proposal_withdrawn":
+            conn.execute("UPDATE proposals SET status='withdrawn', detail=?, updated_seq=? WHERE id=? AND status='pending'",
+                         (json.dumps({"reason": e["reason"]}, sort_keys=True), seq, e["proposal"]))
         elif kind == "type_defined":
             schema = json.loads(get_meta(conn, "schema"))
             schema["entity_types"][e["name"]] = e["description"]
